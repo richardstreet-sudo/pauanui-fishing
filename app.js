@@ -1,6 +1,6 @@
 import {
   DEFAULTS, fetchForecast, buildDays, tidesFromModel, parseLinz, mergeTides, nzNow,
-  weekday, windowLabel, compass, dateOf, fmtMins, lureAdvice, speciesOutlook, todaysTips, gearList,
+  weekday, windowLabel, compass, dateOf, fmtMins, parseMaoriCalendar, lureAdvice, speciesOutlook, todaysTips, gearList,
 } from './core.js';
 import { SOURCES, SPECIES, HABITATS } from './knowledge.js';
 import { parseCoords, parseGpx, conditionsAt, spotsForToday, shelter, satelliteUrl, wetmapsUrl, km, trySpots, ISLANDS } from './spots.js';
@@ -21,6 +21,8 @@ const keyOf = (p) => `${p.lat},${p.lon}`;
 let cache = caches[keyOf(cur())] || null;
 let days = [], tides = [], showNight = false;
 let spots = load('pf.spots', []);
+let maori = load('pf.maori', {});
+const MAORI_STARS = { Excellent: '★★★', Good: '★★', Poor: '★' };
 const saveSpots = () => localStorage.setItem('pf.spots', JSON.stringify(spots));
 const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -68,6 +70,12 @@ const hhmm = (t) => t.slice(11, 16);
 const range = (a, b, f = n0) => (a == null ? '–' : Math.abs(a - b) < (f === n0 ? 0.5 : 0.05) ? f(a) : `${f(a)}–${f(b)}`);
 const cls = (v, lim, f) => (v == null ? '' : v >= lim * f ? 'x' : v >= lim ? 'w' : '');
 
+const maoriChip = (d) => {
+  const r = maori[d.date], ok = d.billy.match === true;
+  if (!r && !ok) return '';
+  return `<span class="mp mp-${r || 'none'}" title="Māori fishing calendar: ${r || 'not loaded'}${ok ? '; best window matches Billy Ho\'s tide rule' : ''}">🌙${r ? MAORI_STARS[r] : ''}${ok ? '✓' : ''}</span> `;
+};
+
 // ---------- week view ----------
 function weekView() {
   if (!days.length) { app.innerHTML = '<div class="empty">No forecast yet.</div>'; return; }
@@ -82,7 +90,7 @@ function weekView() {
     const wd = weekday(d.date), dn = +d.date.slice(8), mon = new Date(d.date + 'T12:00:00Z').toLocaleDateString('en-NZ', { month: 'short', timeZone: 'UTC' });
     const badge = (d.best ? `${lab[d.rating]} ${windowLabel(d.best)}` : 'NO-GO') + (d.warn ? ' ⚠' : '');
     return `<button class="day" data-date="${d.date}">
-      <div class="dhead"><span class="dname">${wd} ${dn}<small>↑${hhmm(d.sunrise)} ↓${hhmm(d.sunset)}</small></span><span>${d.dive.level === 'Great' ? '<span title="Great dive day">🤿</span> ' : ''}<span class="badge ${d.rating}">${badge}</span></span></div>
+      <div class="dhead"><span class="dname">${wd} ${dn}<small>↑${hhmm(d.sunrise)} ↓${hhmm(d.sunset)}</small></span><span>${maoriChip(d)}${d.dive.level === 'Great' ? '<span title="Great dive day">🤿</span> ' : ''}<span class="badge ${d.rating}">${badge}</span></span></div>
       <div class="strip" style="--n:${cells}">${strip}</div>
       <div class="stats">
         <span>Wind <b>${range(s.windMin, s.windMax)}</b> g<b>${n0(s.gustMax)}</b></span>
@@ -92,7 +100,8 @@ function weekView() {
       </div></button>`;
   }).join('');
   app.innerHTML = `<div class="axis"><div class="strip" style="--n:${cells}">${axis}</div></div>${rows}
-    <div class="legend"><i class="GO"></i>GO<i class="MAYBE"></i>Maybe<i class="NOGO"></i>No-go<i class="win"></i>best window · kt · m · mm, daylight ranges, swell at window</div>`;
+    <div class="legend"><i class="GO"></i>GO<i class="MAYBE"></i>Maybe<i class="NOGO"></i>No-go<i class="win"></i>best window · kt · m · mm, daylight ranges, swell at window</div>
+    <div class="legend">🌙★★★ = Māori fishing calendar day rating (Excellent ★★★, Good ★★, Poor ★) · ✓ = best window is on the tide Billy Ho favours (waxing moon → outgoing, waning → incoming) · 🤿 = great dive day. ${Object.keys(maori).some((k) => k >= days[0].date) ? '' : `No ratings loaded – paste the page in ⚙︎ (<a href="${SOURCES.maori.url}" target="_blank" rel="noopener">open calendar ↗</a>).`}</div>`;
 }
 
 // ---------- day view ----------
@@ -121,7 +130,7 @@ function dayView(date) {
   if (spots.length) {
     const cond = d.best ? conditionsAt(cache, tides, `${d.date}T${String(d.best.startH).padStart(2, '0')}:30`) : null;
     const hits = spotsForToday(spots, cond);
-    const ranked = trySpots(spots, outlook, sh, hits, settings.places[0]);
+    const ranked = trySpots(spots, outlook, sh, hits, { lat: settings.lat, lon: settings.lon });
     yourSpotsCard = `<div class="dsum"><div class="big"><b>Try these spots</b><a href="#spots" class="dim">manage</a></div>
       ${cond ? `<div class="sub dim">Conditions at ${String(d.best.startH).padStart(2, '0')}:30 – tide ${cond.stage || '?'}, wind ${compass(cond.wdir)} ${n0(cond.wind)} kt, ${cond.light}</div>` : ''}
       ${ranked.length ? ranked.map((r) => `<div class="sub">• <b>${esc(r.spot.name)}</b>${r.best ? ` – ${r.best.species} (${r.best.level}): suits ${r.best.fit.join(', ')}` : ''}${r.notes.length ? '; ' + r.notes.join('; ') : ''}${r.km != null ? ` · ${Math.round(r.km)} km from Pauanui` : ''} · <a href="${satelliteUrl(r.spot.lat, r.spot.lon)}" target="_blank" rel="noopener">satellite</a> · <a href="${wetmapsUrl(r.spot.lat, r.spot.lon)}" target="_blank" rel="noopener">chart</a>${r.best ? `<div class="src">${srcLinks(r.best.src.slice(0, 4))}</div>` : ''}</div>`).join('')
@@ -155,6 +164,7 @@ function dayView(date) {
       <div class="tides">${tideHtml}</div>
       <div class="sub">Tides: ${src}${src !== 'LINZ' ? ' – paste LINZ in ⚙︎ for exact times' : ''}</div>
       <div class="sub">${moonTxt}</div>
+      <div class="sub">🌙 Māori fishing calendar: <b>${maori[d.date] || 'not loaded (paste it in ⚙︎)'}</b> · Billy Ho: ${d.billy.waxing ? 'waxing moon → outgoing tide' : 'waning moon → incoming tide'}${d.billy.stage ? `; best window is on a ${d.billy.stage} tide ${d.billy.match ? '✓' : '(no match)'}` : ''} · <a href="${SOURCES.maori.url}" target="_blank" rel="noopener">his daily rating ↗</a></div>
       ${turnTxt ? `<div class="sub">${turnTxt}</div>` : ''}
       <div class="sub">Day: wind ${range(s.windMin, s.windMax)} g${n0(s.gustMax)} kt · sea ${range(s.seaMin, s.seaMax, n1)} m · rain ${s.rainTotal < 0.05 ? '0' : n1(s.rainTotal)} mm</div>
     </div>
@@ -249,7 +259,7 @@ async function mapView() {
   if (today && spots.length) {
     const outlook = speciesOutlook(today, settings);
     const cond = today.best ? conditionsAt(cache, tides, `${today.date}T${String(today.best.startH).padStart(2, '0')}:30`) : null;
-    ranked = trySpots(spots, outlook, sh, spotsForToday(spots, cond), settings.places[0]).map((r) => r.spot.id);
+    ranked = trySpots(spots, outlook, sh, spotsForToday(spots, cond), { lat: settings.lat, lon: settings.lon }).map((r) => r.spot.id);
   }
   const pts = [...settings.places, ...ISLANDS].map((p) => [p.lat, p.lon]);
   for (const s of spots) {
@@ -391,6 +401,8 @@ $('#gear').addEventListener('click', () => {
   form.places.value = places().map((p) => `${p.name}, ${p.lat}, ${p.lon}`).join('\n');
   form.linz.value = linzText;
   form.favs.value = settings.favs || '';
+  form.maori.value = '';
+  $('#maorihint').textContent = Object.keys(maori).length ? `${Object.keys(maori).length} days loaded (${Object.keys(maori).sort()[0]} → ${Object.keys(maori).sort().at(-1)}). Paste a new month to add it.` : 'Nothing loaded yet.';
   $('#linzhint').textContent = linzHint();
   $('#gridhint').textContent = cache ? `${cur().name}: Open-Meteo grid cells used: weather ${cache.grid.wx.map((v) => v.toFixed(2))}, marine ${cache.grid.marine.map((v) => v.toFixed(2))}.` : '';
   dlg.showModal();
@@ -407,6 +419,8 @@ form.addEventListener('submit', (e) => {
     .map((p) => ({ name: p[0], lat: +p[1], lon: +p[2] }));
   if (parsed.length) next.places = parsed;
   next.favs = form.favs.value;
+  const cal = parseMaoriCalendar(form.maori.value);
+  if (Object.keys(cal).length) { maori = { ...maori, ...cal }; localStorage.setItem('pf.maori', JSON.stringify(maori)); }
   settings = next;
   placeIdx = Math.min(placeIdx, settings.places.length - 1);
   linzText = form.linz.value;

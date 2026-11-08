@@ -1,5 +1,5 @@
 // Stale-while-revalidate for the app shell. Forecast data is cached by the app in localStorage.
-const CACHE = 'pf-v4';
+const CACHE = 'pf-v5';
 const SHELL = ['./', 'index.html', 'app.js', 'core.js', 'knowledge.js', 'spots.js', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css', 'style.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

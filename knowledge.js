@@ -161,7 +161,7 @@ export const TIPS = [
     text: 'Around and just after a full moon fishing is often poor for snapper and kingfish, and jack mackerel are hard to catch for bait. Bright nights can also shorten the dawn bite.',
     src: ['pgSnapper', 'pgKing', 'jetLive'] },
   { id: 'maori', when: () => true,
-    text: (c) => `Billy Ho's rule of thumb: fishing tends to be better on an incoming tide when the moon is waning, and an outgoing tide when it is waxing (${c.moon.age < 14.77 ? 'moon is waxing → outgoing' : 'moon is waning → incoming'}). His Māori fishing calendar rates each day Excellent / Good / Poor.`,
+    text: (c) => `Billy Ho's rule of thumb: better on an incoming tide when the moon is waning, and an outgoing tide when it is waxing. Today the moon is ${c.moon.age < 14.765 ? 'waxing, so he favours the outgoing tide' : 'waning, so he favours the incoming tide'}${c.billy?.stage ? `; your best window is on a ${c.billy.stage} tide – ${c.billy.match ? 'a match' : 'not a match'}` : ''}. His Māori fishing calendar rates each day Excellent / Good / Poor – check it for today's rating.`,
     src: ['maori'] },
   { id: 'midday', when: (c) => c.startH != null && c.startH >= 10 && c.startH <= 14,
     text: 'Your window is around midday, which is often the quietest time (especially for summer snapper). If you can, shift it towards dawn or dusk.',

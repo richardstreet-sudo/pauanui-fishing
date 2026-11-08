@@ -1,5 +1,6 @@
 // Spot log logic (pure, no DOM): coordinates, GPX import, tide stage, "worked before" matching, island shelter.
-import { toMs, minsOf, dateOf, moonInfo } from './core.js';
+import { toMs, minsOf, dateOf, moonInfo, tideStage } from './core.js';
+export { tideStage };
 import { SPECIES } from './knowledge.js';
 
 export const ISLANDS = [
@@ -57,18 +58,6 @@ export const angDiff = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
 /** Deep link into wetmaps.co.nz (LINZ charts): the site's own URLs look like #zoom/lat/lon. */
 export const wetmapsUrl = (lat, lon, z = 14) => `https://wetmaps.co.nz/#${z}/${(+lat).toFixed(4)}/${(+lon).toFixed(4)}`;
 export const satelliteUrl = (lat, lon) => `https://www.google.com/maps/@${lat},${lon},17z/data=!3m1!1e3`;
-
-/** 'high slack' | 'low slack' (within 45 min of a turn) | 'flooding' | 'ebbing' | null */
-export function tideStage(tides, t) {
-  const m = toMs(t);
-  let prev = null, next = null;
-  for (const e of tides) { if (toMs(e.t) <= m) prev = e; else { next = e; break; } }
-  if (!prev && !next) return null;
-  const nearest = [prev, next].filter(Boolean).sort((a, b) => Math.abs(toMs(a.t) - m) - Math.abs(toMs(b.t) - m))[0];
-  if (Math.abs(toMs(nearest.t) - m) <= 45 * 60000) return nearest.type === 'H' ? 'high slack' : 'low slack';
-  if (prev) return prev.type === 'H' ? 'ebbing' : 'flooding';
-  return next.type === 'H' ? 'flooding' : 'ebbing';
-}
 
 export function lightBand(mins, sr, ss) {
   if (Math.abs(mins - sr) <= 90) return 'dawn';

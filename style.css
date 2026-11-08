@@ -76,3 +76,4 @@ details.dsum summary{cursor:pointer;list-style:none}details.dsum[open] summary{m
 .habs{display:flex;flex-wrap:wrap;gap:4px 10px;margin:6px 0}.chk{display:inline-flex;align-items:center;gap:4px;font-size:13px;margin:0}.chk input{width:auto}
 #map{height:68vh;min-height:360px;border-radius:12px;overflow:hidden}.islbl{color:#fff;font-weight:700;font-size:12px;text-align:center;text-shadow:0 0 3px #000,0 0 3px #000;line-height:1.1}.islbl small{font-weight:400}
 .seg{display:flex;gap:6px;margin:4px 0 8px}.seg button{flex:1;background:var(--card);border-radius:10px;padding:8px;font-size:14px}.seg button.on{background:var(--text);color:var(--bg);font-weight:700}#chartframe{width:100%;height:68vh;min-height:360px;border:0;border-radius:12px;background:var(--card)}
+.mp{font-size:12px;white-space:nowrap}.mp-Excellent{color:#2fbf71}.mp-Good{color:#f0b429}.mp-Poor{color:#8fa8bd}

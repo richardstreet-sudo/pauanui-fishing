@@ -1,6 +1,7 @@
 // Run in Node (`node tests.mjs`) or import in a browser console. No dependencies.
 import { SOURCES, SPECIES, TIPS, GEAR } from './knowledge.js';
 import { parseCoords, parseGpx, tideStage, similarity, spotsForToday, shelter, trySpots, wetmapsUrl } from './spots.js';
+import { billyHo, parseMaoriCalendar } from './core.js';
 import { rateHour, buildDays, parseLinz, tidesFromModel, mergeTides, moonInfo, solunar, runoffFor, lureAdvice, speciesOutlook, diveOutlook, todaysTips, gearList, DEFAULTS } from './core.js';
 
 const fails = [];
@@ -121,7 +122,7 @@ eq(rateHour({ ...ok, vis: 800 }).r, 'NOGO', 'fog = NOGO');
   eq(diveOutlook(mk('muddy', 0.3, 0.3)).level, 'Poor', 'muddy = Poor');
   eq(diveOutlook(mk('clear', 1.2, 1.0)).level, 'Poor', 'big sea = Poor');
 }
-eq(DEFAULTS.places.length, 4, 'four default spots');
+eq(DEFAULTS.places.length, 3, 'three default spots');
 
 // Knowledge base integrity: every cited source exists; tips/gear produce output.
 {
@@ -163,6 +164,16 @@ eq(DEFAULTS.places.length, 4, 'four default spots');
 }
 
 eq(wetmapsUrl(-37.0604, 176.0374, 11), 'https://wetmaps.co.nz/#11/-37.0604/176.0374', 'wetmaps deep link matches the site format');
+// Billy Ho: waxing -> outgoing tide; waning -> incoming.
+{
+  const tdl = [{ t: '2026-11-14T04:13', type: 'L' }, { t: '2026-11-14T10:33', type: 'H' }, { t: '2026-11-14T16:44', type: 'L' }];
+  const ebb = { startH: 12, endH: 15 }, flood = { startH: 6, endH: 9 };
+  eq(billyHo('2026-11-14', ebb, tdl, { age: 3 }).match, true, 'waxing + ebb = match');
+  eq(billyHo('2026-11-14', flood, tdl, { age: 3 }).match, false, 'waxing + flood = no match');
+  eq(billyHo('2026-11-14', flood, tdl, { age: 20 }).match, true, 'waning + flood = match');
+  eq(billyHo('2026-11-14', null, tdl, { age: 3 }).match, null, 'no window -> null');
+}
+eq(parseMaoriCalendar('Poor fishing on Sunday 1 November 2026\nExcellent fishing on Monday 2 November 2026 Good fishing on Monday 16 November 2026'), { '2026-11-01': 'Poor', '2026-11-02': 'Excellent', '2026-11-16': 'Good' }, 'maori calendar parse');
 // Try-today ranking: kingfish suits a pinnacle on an island point; a sand spot suits gurnard; untagged spots are skipped.
 {
   const outlook = [{ name: 'Kingfish', level: 'Fair' }, { name: 'Gurnard', level: 'Fair' }, { name: 'Snapper', level: 'Slow' }];

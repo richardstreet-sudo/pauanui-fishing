@@ -6,7 +6,6 @@ export const DEFAULTS = {
   lon: 175.89,
   // Spots you fish; each gets its own forecast. Open-Meteo's marine grid is ~8 km, so nearby spots can share cells.
   places: [
-    { name: 'Pauanui', lat: -37.02, lon: 175.89 },
     { name: 'Shoe / Slipper', lat: -37.02, lon: 175.93 },
     { name: 'Boat Cove', lat: -36.93, lon: 175.86 }, // just off Waipapa Island (island centre; refine in settings)
     { name: 'Aldermen', lat: -36.96, lon: 176.086 },
@@ -201,6 +200,7 @@ export function buildDays(fc, L = DEFAULTS, now = nzNow(), tides = []) {
     const turnMult = moon.tide === 'spring' ? 1.5 : moon.tide === 'neap' ? 0.5 : 1;
     // GO windows always beat MAYBE windows; within a class the dawn/dusk bonus decides.
     const best = pickWindow(hs, L, sr, ss, false, turnMult) || pickWindow(hs, L, sr, ss, true, turnMult);
+    const billy = billyHo(date, best, tides, moon);
     const scope = best ? hs.filter((h) => h.h >= best.startH && h.h < best.endH) : hs.filter((h) => h.day && !h.past);
     const safety = [];
     for (const k of ['offshore', 'opposed', 'storm', 'fog']) {
@@ -216,7 +216,7 @@ export function buildDays(fc, L = DEFAULTS, now = nzNow(), tides = []) {
     const mn = (a) => (a.length ? Math.min(...a) : null);
     const ref = (best && hs.find((h) => h.h === best.startH)) || dl[Math.floor(dl.length / 2)] || hs[9];
     const day = {
-      date, sunrise: d.sunrise, sunset: d.sunset, sr, ss, hours: hs, best, moon, sol, runoff, safety, loc: fc.lat != null ? [fc.lat, fc.lon] : null, cold, pressure, warn: safety.length > 0,
+      date, sunrise: d.sunrise, sunset: d.sunset, sr, ss, hours: hs, best, moon, sol, runoff, billy, safety, loc: fc.lat != null ? [fc.lat, fc.lon] : null, cold, pressure, warn: safety.length > 0,
       rating: best ? best.quality : 'NOGO',
       stats: {
         windMin: mn(nums('wind')), windMax: mx(nums('wind')), gustMax: mx(nums('gust')),
@@ -232,6 +232,35 @@ export function buildDays(fc, L = DEFAULTS, now = nzNow(), tides = []) {
 }
 
 export const windowLabel = (b) => (b ? `${pad(b.startH)}:00–${pad(b.endH % 24)}:00` : '');
+
+/**
+ * Billy Ho's rule of thumb (fishing.net.nz Māori fishing calendar page): better on an incoming tide when the moon
+ * is waning, and on an outgoing tide when it is waxing. We check the best window's tide stage against it.
+ * His own day ratings (Excellent/Good/Poor) are not reproduced here – the app links to his calendar instead.
+ */
+export function billyHo(date, best, tides, moon) {
+  const waxing = moon.age < 14.765;
+  const want = waxing ? 'ebbing' : 'flooding';
+  let stage = null;
+  if (best) {
+    const mid = Math.floor(((best.startH + best.endH) / 2) * 60);
+    stage = tideStage(tides, `${date}T${pad(Math.floor(mid / 60))}:${pad(mid % 60)}`);
+  }
+  return { waxing, want, stage, match: stage == null ? null : stage === want };
+}
+
+const MON = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12 };
+/** Pasted text of the fishing.net.nz Māori fishing calendar page -> { 'YYYY-MM-DD': 'Excellent'|'Good'|'Poor' }. */
+export function parseMaoriCalendar(text) {
+  const out = {};
+  const re = /\b(Excellent|Good|Poor)\s+fishing\s+on\s+[A-Za-z]+\s+(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/gi;
+  let m;
+  while ((m = re.exec(String(text)))) {
+    const mon = MON[m[3].toLowerCase()];
+    if (mon) out[`${m[4]}-${pad(mon)}-${pad(+m[2])}`] = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+  }
+  return out;
+}
 
 // ---------- diving ----------
 
@@ -375,12 +404,12 @@ const kmBetween = (a, b) => {
 
 /** Context-driven tips for the day (see TIPS in knowledge.js). */
 export function todaysTips(day, outlook, L = DEFAULTS) {
-  const home = L.places?.[0];
+  const home = { lat: L.lat, lon: L.lon }; // Pauanui, for distances
   const ctx = {
     month: +day.date.slice(5, 7), startH: day.best?.startH ?? null, hasWindow: !!day.best, rating: day.rating,
     turnInWindow: !!day.best && day.hours.some((h) => h.h >= day.best.startH && h.h < day.best.endH && h.turn),
     moon: day.moon, runoff: day.runoff, outlook, sst: day.hours.find((h) => h.h === 12)?.sst ?? null,
-    km: day.loc && home ? kmBetween(day.loc, [home.lat, home.lon]) : 0,
+    km: day.loc && home ? kmBetween(day.loc, [home.lat, home.lon]) : 0, billy: day.billy,
   };
   return TIPS.filter((t) => t.when(ctx)).map((t) => ({ id: t.id, text: typeof t.text === 'function' ? t.text(ctx) : t.text, src: t.src }));
 }
@@ -443,6 +472,19 @@ export function solunar(date, lat, lon) {
   }
   return out.sort((x, y) => x.start - y.start);
 }
+
+/** 'high slack' | 'low slack' (within 45 min of a turn) | 'flooding' | 'ebbing' | null */
+export function tideStage(tides, t) {
+  const m = toMs(t);
+  let prev = null, next = null;
+  for (const e of tides) { if (toMs(e.t) <= m) prev = e; else { next = e; break; } }
+  if (!prev && !next) return null;
+  const nearest = [prev, next].filter(Boolean).sort((a, b) => Math.abs(toMs(a.t) - m) - Math.abs(toMs(b.t) - m))[0];
+  if (Math.abs(toMs(nearest.t) - m) <= 45 * 60000) return nearest.type === 'H' ? 'high slack' : 'low slack';
+  if (prev) return prev.type === 'H' ? 'ebbing' : 'flooding';
+  return next.type === 'H' ? 'flooding' : 'ebbing';
+}
+
 
 // ---------- tides ----------
 

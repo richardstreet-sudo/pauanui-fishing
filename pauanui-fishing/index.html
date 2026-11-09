@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pauanui Fishing</title>
+<meta name="theme-color" content="#0b2239">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Pauanui Fishing">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="title"><button id="back" hidden aria-label="Back to week">‹</button><h1 id="h1">Pauanui Fishing</h1></div>
+  <div class="actions">
+    <button id="mapBtn" aria-label="Map">🗺️</button>
+    <button id="spotsBtn" aria-label="Spots">📍</button>
+    <button id="refresh" aria-label="Refresh">⟳</button>
+    <button id="gear" aria-label="Settings">⚙︎</button>
+  </div>
+</header>
+<nav id="places" aria-label="Fishing spot"></nav>
+<div id="status" role="status"></div>
+<main id="app"></main>
+
+<dialog id="settings">
+  <form method="dialog" id="sform">
+    <h2>Settings</h2>
+    <fieldset><legend>Fishing spots</legend>
+      <textarea name="places" rows="4" placeholder="Name, lat, lon (one per line)"></textarea>
+      <p class="hint">One per line: <code>Name, lat, lon</code>. Forecast cells are ~8 km, so close spots look alike.</p>
+      <p class="hint" id="gridhint"></p>
+    </fieldset>
+    <fieldset><legend>Limits (GO if below all)</legend>
+      <label>Wind kt <input name="windMax" type="number" step="any" inputmode="decimal"></label>
+      <label>Gust kt <input name="gustMax" type="number" step="any" inputmode="decimal"></label>
+      <label>Sea m <input name="seaMax" type="number" step="any" inputmode="decimal"></label>
+      <label>Heavy rain mm/h <input name="rainHeavy" type="number" step="any" inputmode="decimal"></label>
+      <label>MAYBE tolerance <input name="maybeFactor" type="number" step="0.05" inputmode="decimal"></label>
+      <p class="hint">MAYBE = over a limit by less than this factor (1.25 = 25%). Beyond that is NO-GO.</p>
+    </fieldset>
+    <fieldset><legend>Ski</legend>
+      <label>Full-tank range (km) <input name="skiRangeKm" type="number" step="any" inputmode="decimal"></label>
+      <p class="hint">0 = not set. Used for the rule-of-thirds fuel check on far spots (a third out, a third back, a third spare).</p>
+    </fieldset>
+    <fieldset><legend>Lures</legend>
+      <label>Favourite colours <input name="favs" type="text" placeholder="e.g. pink, gold" style="width:170px"></label>
+    </fieldset>
+    <fieldset><legend>Tides</legend>
+      <p class="hint">Tides come from LINZ's official Tauranga predictions (bundled, 2026–2029) with LINZ's Tairua / Slipper Island time corrections. Pasting below overrides them.</p>
+      <textarea name="linz" rows="4" placeholder="Optional override: paste LINZ tide table text here."></textarea>
+      <p class="hint" id="linzhint"></p>
+    </fieldset>
+    <div class="row"><button value="save" id="save">Save</button><button value="reset" id="reset" type="button">Reset</button><button value="cancel">Close</button></div>
+  </form>
+</dialog>
+<script type="module" src="app.js"></script>
+</body>
+</html>

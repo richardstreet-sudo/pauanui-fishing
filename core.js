@@ -62,7 +62,7 @@ async function getJson(url, f) {
 }
 
 export async function fetchForecast(lat, lon, f = globalThis.fetch) {
-  const tz = 'timezone=Pacific%2FAuckland&forecast_days=7';
+  const tz = 'timezone=Pacific%2FAuckland&forecast_days=16'; // marine data stops after ~9 days, weather runs 16
   const wxUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&hourly=wind_speed_10m,wind_gusts_10m,wind_direction_10m,precipitation,precipitation_probability,cloud_cover,weather_code,visibility,pressure_msl&past_days=3` +
     `&daily=sunrise,sunset&wind_speed_unit=kn&${tz}`;
@@ -91,7 +91,7 @@ export async function fetchForecast(lat, lon, f = globalThis.fetch) {
 
 // ---------- rating ----------
 
-export function rateHour(h, L = DEFAULTS) {
+export function rateHour(h, L = DEFAULTS, ignoreSea = false) {
   const f = L.maybeFactor;
   const checks = [
     ['wind', h.wind, L.windMax], ['gust', h.gust, L.gustMax], ['sea', h.wave, L.seaMax],
@@ -99,7 +99,7 @@ export function rateHour(h, L = DEFAULTS) {
   const why = [];
   let r = 'GO';
   for (const [name, v, lim] of checks) {
-    if (v == null || Number.isNaN(v)) { if (r === 'GO') r = 'MAYBE'; why.push(`${name}: no data`); continue; }
+    if (v == null || Number.isNaN(v)) { if (ignoreSea && name === 'sea') continue; if (r === 'GO') r = 'MAYBE'; why.push(`${name}: no data`); continue; }
     if (v >= lim * f) { r = 'NOGO'; why.push(`${name} ${v} ≥ ${+(lim * f).toFixed(2)}`); }
     else if (v >= lim) { if (r === 'GO') r = 'MAYBE'; why.push(`${name} ${v} ≥ ${lim}`); }
   }
@@ -181,10 +181,11 @@ export function buildDays(fc, L = DEFAULTS, now = nzNow(), tides = []) {
     const d = fc.daily[date];
     if (!d || date < today) continue; // past_days data is only used for runoff history
     const sr = minsOf(d.sunrise), ss = minsOf(d.sunset);
+    const outlook = list.filter((h) => h.wave != null).length < 12; // no sea/swell/tide data this far out
     const moon = moonInfo(date);
     const sol = solunar(date, fc.lat ?? L.lat, fc.lon ?? L.lon);
     const hs = list.map((raw) => {
-      const { r, why } = rateHour(raw, L);
+      const { r, why } = rateHour(raw, L, outlook);
       const start = raw.h * 60;
       const mid = toMs(raw.t) + 30 * 60000;
       const turn = tides.find((e) => Math.abs(toMs(e.t) - mid) <= L.turnMins * 60000) || null;
@@ -216,7 +217,7 @@ export function buildDays(fc, L = DEFAULTS, now = nzNow(), tides = []) {
     const mn = (a) => (a.length ? Math.min(...a) : null);
     const ref = (best && hs.find((h) => h.h === best.startH)) || dl[Math.floor(dl.length / 2)] || hs[9];
     const day = {
-      date, sunrise: d.sunrise, sunset: d.sunset, sr, ss, hours: hs, best, moon, sol, runoff, billy, safety, loc: fc.lat != null ? [fc.lat, fc.lon] : null, cold, pressure, warn: safety.length > 0,
+      date, sunrise: d.sunrise, sunset: d.sunset, sr, ss, hours: hs, best, moon, sol, runoff, billy, outlook, safety, loc: fc.lat != null ? [fc.lat, fc.lon] : null, cold, pressure, warn: safety.length > 0,
       rating: best ? best.quality : 'NOGO',
       stats: {
         windMin: mn(nums('wind')), windMax: mx(nums('wind')), gustMax: mx(nums('gust')),
@@ -225,7 +226,7 @@ export function buildDays(fc, L = DEFAULTS, now = nzNow(), tides = []) {
         ref: ref?.h,
       },
     };
-    day.dive = diveOutlook(day, L);
+    day.dive = outlook ? { level: 'n/a', window: null, why: ['no sea or swell data this far out'] } : diveOutlook(day, L);
     days.push(day);
   }
   return days;
@@ -409,7 +410,7 @@ export function todaysTips(day, outlook, L = DEFAULTS) {
     month: +day.date.slice(5, 7), startH: day.best?.startH ?? null, hasWindow: !!day.best, rating: day.rating,
     turnInWindow: !!day.best && day.hours.some((h) => h.h >= day.best.startH && h.h < day.best.endH && h.turn),
     moon: day.moon, runoff: day.runoff, outlook, sst: day.hours.find((h) => h.h === 12)?.sst ?? null,
-    km: day.loc && home ? kmBetween(day.loc, [home.lat, home.lon]) : 0, billy: day.billy,
+    km: day.loc && home ? kmBetween(day.loc, [home.lat, home.lon]) : 0, billy: day.billy, farOut: day.outlook,
   };
   return TIPS.filter((t) => t.when(ctx)).map((t) => ({ id: t.id, text: typeof t.text === 'function' ? t.text(ctx) : t.text, src: t.src }));
 }

@@ -174,6 +174,13 @@ eq(wetmapsUrl(-37.0604, 176.0374, 11), 'https://wetmaps.co.nz/#11/-37.0604/176.0
   eq(billyHo('2026-11-14', null, tdl, { age: 3 }).match, null, 'no window -> null');
 }
 eq(parseMaoriCalendar('Poor fishing on Sunday 1 November 2026\nExcellent fishing on Monday 2 November 2026 Good fishing on Monday 16 November 2026'), { '2026-11-01': 'Poor', '2026-11-02': 'Excellent', '2026-11-16': 'Good' }, 'maori calendar parse');
+// Outlook days (no marine data): rated on wind/rain only, no dive rating.
+{
+  const dt = '2026-11-20';
+  const hrs = Array.from({ length: 24 }, (_, h) => ({ t: `${dt}T${String(h).padStart(2, '0')}:00`, date: dt, h, wind: 5, gust: 8, rain: 0, wave: null, p: 1015 }));
+  const w = buildDays({ hours: hrs, lat: -37.02, lon: 175.89, daily: { [dt]: { sunrise: `${dt}T06:00`, sunset: `${dt}T19:00` } } }, DEFAULTS, '2026-11-13T12:00', [])[0];
+  eq([w.outlook, w.rating, w.dive.level], [true, 'GO', 'n/a'], 'outlook day: wind-only GO, no dive rating');
+}
 // Try-today ranking: kingfish suits a pinnacle on an island point; a sand spot suits gurnard; untagged spots are skipped.
 {
   const outlook = [{ name: 'Kingfish', level: 'Fair' }, { name: 'Gurnard', level: 'Fair' }, { name: 'Snapper', level: 'Slow' }];

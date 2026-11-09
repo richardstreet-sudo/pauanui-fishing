@@ -19,7 +19,7 @@ const places = () => settings.places;
 const cur = () => places()[Math.min(placeIdx, places().length - 1)];
 const keyOf = (p) => `${p.lat},${p.lon}`;
 let cache = caches[keyOf(cur())] || null;
-let days = [], tides = [], showNight = false;
+let days = [], tides = [], showNight = false, weekIdx = 0;
 let spots = load('pf.spots', []);
 let maori = load('pf.maori', {});
 const MAORI_STARS = { Excellent: '★★★', Good: '★★', Poor: '★' };
@@ -29,7 +29,7 @@ const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 function recompute() {
   if (!cache) { days = []; tides = []; return; }
   tides = mergeTides(tidesFromModel(cache.hours), parseLinz(linzText));
-  days = buildDays(cache, settings, nzNow(), tides);
+  days = buildDays(cache, settings, nzNow(), tides).slice(0, 14);
 }
 
 function setStatus(msg, err = false) { statusEl.textContent = msg; statusEl.className = err ? 'err' : ''; }
@@ -81,15 +81,17 @@ function weekView() {
   if (!days.length) { app.innerHTML = '<div class="empty">No forecast yet.</div>'; return; }
   const cells = STRIP_TO - STRIP_FROM + 1;
   const axis = Array.from({ length: cells }, (_, i) => `<span>${(STRIP_FROM + i) % 4 === 0 ? STRIP_FROM + i : ''}</span>`).join('');
-  const rows = days.map((d) => {
+  if (weekIdx > 0 && days.length <= 7) weekIdx = 0;
+  const shown = days.slice(weekIdx * 7, weekIdx * 7 + 7);
+  const rows = shown.map((d) => {
     const strip = d.hours.filter((h) => h.h >= STRIP_FROM && h.h <= STRIP_TO).map((h) => {
       const inWin = d.best && h.h >= d.best.startH && h.h < d.best.endH;
       return `<i class="${h.r}${h.day ? '' : ' night'}${h.past ? ' past' : ''}${inWin ? ' win' : ''}" title="${hhmm(h.t)} ${lab[h.r]}"></i>`;
     }).join('');
     const s = d.stats;
     const wd = weekday(d.date), dn = +d.date.slice(8), mon = new Date(d.date + 'T12:00:00Z').toLocaleDateString('en-NZ', { month: 'short', timeZone: 'UTC' });
-    const badge = (d.best ? `${lab[d.rating]} ${windowLabel(d.best)}` : 'NO-GO') + (d.warn ? ' ⚠' : '');
-    return `<button class="day" data-date="${d.date}">
+    const badge = (d.outlook ? '≈ ' : '') + (d.best ? `${lab[d.rating]} ${windowLabel(d.best)}` : 'NO-GO') + (d.warn ? ' ⚠' : '');
+    return `<button class="day${d.outlook ? ' est' : ''}" data-date="${d.date}">
       <div class="dhead"><span class="dname">${wd} ${dn}<small>↑${hhmm(d.sunrise)} ↓${hhmm(d.sunset)}</small></span><span>${maoriChip(d)}${d.dive.level === 'Great' ? '<span title="Great dive day">🤿</span> ' : ''}<span class="badge ${d.rating}">${badge}</span></span></div>
       <div class="strip" style="--n:${cells}">${strip}</div>
       <div class="stats">
@@ -99,9 +101,11 @@ function weekView() {
         <span>Rain <b>${s.rainTotal < 0.05 ? '0' : n0(s.rainTotal)}</b></span>
       </div></button>`;
   }).join('');
-  app.innerHTML = `<div class="axis"><div class="strip" style="--n:${cells}">${axis}</div></div>${rows}
+  const wk = days.length > 7 ? `<div class="seg"><button data-week="0" class="${weekIdx === 0 ? 'on' : ''}">This week</button><button data-week="1" class="${weekIdx === 1 ? 'on' : ''}">Next week</button></div>` : '';
+  const estNote = weekIdx === 1 ? '<div class="hint dim">≈ Outlook only: this far out the forecast has wind, gusts and rain but no sea, swell or tide data (it runs out after about 9 days), so ratings use wind and rain only and sea height is unknown. Treat as a rough guide and re-check closer to the day.</div>' : '';
+  app.innerHTML = `${wk}${estNote}<div class="axis"><div class="strip" style="--n:${cells}">${axis}</div></div>${rows}
     <div class="legend"><i class="GO"></i>GO<i class="MAYBE"></i>Maybe<i class="NOGO"></i>No-go<i class="win"></i>best window · kt · m · mm, daylight ranges, swell at window</div>
-    <div class="legend">🌙★★★ = Māori fishing calendar day rating (Excellent ★★★, Good ★★, Poor ★) · ✓ = best window is on the tide Billy Ho favours (waxing moon → outgoing, waning → incoming) · 🤿 = great dive day. ${Object.keys(maori).some((k) => k >= days[0].date) ? '' : `No ratings loaded – paste the page in ⚙︎ (<a href="${SOURCES.maori.url}" target="_blank" rel="noopener">open calendar ↗</a>).`}</div>`;
+    <div class="legend">🌙★★★ = Māori fishing calendar day rating (Excellent ★★★, Good ★★, Poor ★) · ✓ = best window is on the tide Billy Ho favours (waxing moon → outgoing, waning → incoming) · 🤿 = great dive day. ${Object.keys(maori).some((k) => k >= shown[0].date) ? '' : `No ratings loaded – paste the page in ⚙︎ (<a href="${SOURCES.maori.url}" target="_blank" rel="noopener">open calendar ↗</a>).`}</div>`;
 }
 
 // ---------- day view ----------
@@ -180,11 +184,12 @@ function dayView(date) {
       ${d.pressure ? `<div class="sub">Pressure ${d.pressure.hpa} hPa, ${d.pressure.trend} (${d.pressure.delta > 0 ? '+' : ''}${d.pressure.delta} over 6 h) – ${d.pressure.text}.</div>` : ''}
       <div class="sub">Because: ${lure.why}. Rule of thumb, not science.</div>
     </div>
-    <div class="dsum">
+    ${d.outlook ? '<div class="dsum warn"><div class="sub">≈ Outlook only: no sea, swell or tide data this far out. Rating uses wind and rain; sea height is unknown, so check again closer to the day.</div></div>' : ''}
+    ${d.outlook ? '' : `<div class="dsum">
       <div class="big"><b>🤿 Dive outlook</b><span class="badge ${d.dive.level === 'Great' ? 'GO' : d.dive.level === 'OK' ? 'MAYBE' : 'NOGO'}">${d.dive.level}${d.dive.window ? ' ' + windowLabel(d.dive.window) : ''}</span></div>
       <div class="sub">${d.dive.why.join(' · ')}</div>
       <div class="sub dim">Conditions only – midday sun, small swell, little recent rain, ideally slack water. Dive to your training.</div>
-    </div>
+    </div>`}
     <div class="dsum">
       <div class="big"><b>Tips for today</b><span class="dim">from fishing.net.nz</span></div>
       ${tips.map((t) => `<div class="sub tip">${t.text}<div class="src">${srcLinks(t.src)}</div></div>`).join('')}
@@ -383,7 +388,10 @@ function render() {
 }
 addEventListener('hashchange', render);
 back.addEventListener('click', () => { history.length > 1 && route() ? history.back() : go(null); });
-app.addEventListener('click', (e) => { const b = e.target.closest('.day'); if (b) go(b.dataset.date); });
+app.addEventListener('click', (e) => {
+  const w = e.target.closest('[data-week]'); if (w) { weekIdx = +w.dataset.week; render(); return; }
+  const b = e.target.closest('.day'); if (b) go(b.dataset.date);
+});
 $('#refresh').addEventListener('click', () => refresh(true));
 $('#mapBtn').addEventListener('click', () => { location.hash = '#map'; });
 $('#spotsBtn').addEventListener('click', () => { location.hash = '#spots'; });

@@ -154,7 +154,7 @@ export const TIPS = [
   { id: 'turbid', when: (c) => (c.runoff.level === 'muddy' || c.runoff.level === 'stained') && !c.runoff.clearing,
     text: 'Turbid runoff water is poor for table fish near river mouths – it takes about three days (six tidal flushes) to settle. Try rocky coast away from freshwater, or brighter/high-contrast colours.',
     src: ['autumn', 'colours'] },
-  { id: 'noRun', when: (c) => c.hasWindow && !c.turnInWindow && c.rating !== 'NOGO',
+  { id: 'noRun', when: (c) => !c.farOut && c.hasWindow && !c.turnInWindow && c.rating !== 'NOGO',
     text: '"No run, no fun": there\'s no tide turn in your window. If you can, shift towards one – fish need current to spread scent. Bite times often line up with the run-up to low tide.',
     src: ['notBiting', 'biteTimes'] },
   { id: 'fullMoon', when: (c) => c.moon.afterFull,

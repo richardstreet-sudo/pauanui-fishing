@@ -2,7 +2,7 @@ import {
   DEFAULTS, fetchForecast, buildDays, tidesFromModel, parseLinz, parseLinzCsv, applyTideOffsets, mergeTides, nzNow,
   weekday, windowLabel, compass, dateOf, fmtMins, parseMaoriCalendar, lureAdvice, speciesOutlook, todaysTips, gearList,
 } from './core.js';
-import { SOURCES, SPECIES, HABITATS, COMBOS } from './knowledge.js';
+import { SOURCES, SPECIES, HABITATS, COMBOS, SEED_SPOTS, VHF } from './knowledge.js';
 import { setAreas, getAreas, protectedNear, insideProtected, KIND_TEXT, RULES_URL } from './protected.js';
 import { gearPlan, parseLures } from './gear.js';
 import { bestBet, gridModel, targetFor, tripCheck, turnsRedAt } from './plan.js';
@@ -126,6 +126,22 @@ const maoriChip = (d) => {
   return `<span class="mp mp-${r || 'none'}" title="Māori fishing calendar: ${r || 'not loaded'}${ok ? '; best window matches Billy Ho\'s tide rule' : ''}">🌙${r ? MAORI_STARS[r] : ''}${ok ? '✓' : ''}</span> `;
 };
 
+
+const vhfHtml = () => `<details class="dsum"><summary><b>📻 VHF quick reference</b> <span class="dim">(tap)</span></summary>
+    ${VHF.channels.map((c) => `<div class="sub"><b>${esc(c)}</b></div>`).join('')}
+    <table class="vhf"><thead><tr><th>Area</th><th>Coastguard</th><th>Weather</th></tr></thead><tbody>${VHF.areas.map((r) => `<tr><td><b>${esc(r.area)}</b></td><td>${r.coastguard}</td><td>${r.weather}</td></tr>`).join('')}</tbody></table>
+    <div class="sub"><b>MAYDAY (channel 16)</b></div>
+    ${VHF.mayday.map((m) => `<div class="sub">• ${esc(m)}</div>`).join('')}
+    <div class="sub dim">From your own VHF sheet – check the channels against the current Coastguard list.</div>
+  </details>`;
+
+// Seed the spots whose positions were checked (once per seed version); you can rename or delete them in 📍.
+const SEED_V = 1;
+if ((+localStorage.getItem('pf.seedV') || 0) < SEED_V) {
+  for (const s of SEED_SPOTS) if (!spots.some((x) => x.name === s.name)) spots.push({ id: Math.random().toString(36).slice(2, 9), ...s, catches: [], created: 'seed' });
+  saveSpots(); localStorage.setItem('pf.seedV', SEED_V);
+}
+
 // ---------- first screen: answer first ----------
 const nzDay = (date) => `${weekday(date)} ${+date.slice(8)}`;
 const protectedHtml = (p) => {
@@ -223,6 +239,7 @@ function weekView() {
   const estNote = weekIdx === 1 ? '<div class="hint dim">≈ Outlook only: this far out the forecast has wind, gusts and rain but no sea, swell or tide data (it runs out after about 9 days), so ratings use wind and rain only and sea height is unknown. Treat as a rough guide and re-check closer to the day.</div>' : '';
   app.innerHTML = `${topCards()}${wk}${estNote}<div class="axis"><div class="strip" style="--n:${cells}">${axis}</div></div>${rows}
     <div class="legend"><i class="GO"></i>GO<i class="MAYBE"></i>Maybe<i class="NOGO"></i>No-go<i class="win"></i>best window · kt · m · mm, daylight ranges, swell at window</div>
+    ${vhfHtml()}
     <div class="legend">🌙★★★ = Māori fishing calendar day rating (Excellent ★★★, Good ★★, Poor ★) · ✓ = best window is on the tide Billy Ho favours (waxing moon → outgoing, waning → incoming) · 🤿 = great dive day. ${Object.keys(maori).some((k) => k >= shown[0].date) ? '' : `Ratings not loaded (<a href="${SOURCES.maori.url}" target="_blank" rel="noopener">open calendar ↗</a>).`}</div>`;
 }
 
@@ -329,6 +346,7 @@ function dayView(date) {
     <div class="dsum">
       <div class="big"><b>What to take</b><span class="dim">your rods and reels</span></div>
       ${plan.take.length ? plan.take.map((t) => `<div class="sub"><b>${t.combo.name}</b> <span class="dim">· ${t.combo.role} · ${esc(t.combo.rod)} · ${t.combo.rodSpec} · ${t.combo.braid} braid</span>${t.modes.map((m) => `<div class="sub">• ${m.title}: ${m.lure}${m.g ? ' ' + (m.g[0] === m.g[1] ? m.g[0] : m.g[0] + '–' + m.g[1]) + ' g' : ''} – ${m.fit.text}${m.alts.length ? `<div class="sub dim">Alternative: ${m.alts.map((x) => `${x.name} (${x.text})`).join('; ')}</div>` : ''}</div>`).join('')}</div>`).join('') : '<div class="sub">Nothing reads Fair or Good for fish, so just take your lightest outfit for a low-expectation session.</div>'}
+      ${plan.picks.length ? `<div class="sub"><b>Lures to start with</b></div>${plan.picks.map((p) => `<div class="sub">• <b>${esc(p.lure.name)}</b>${p.lure.g ? ' ' + p.lure.g + ' g' : ''} <span class="dim">(${p.why})</span>: ${p.how ? esc(p.how) + '. ' : ''}<span class="dim">${p.status === 'unconfirmed' ? '⚠ weight unconfirmed – weigh it before pairing with a rod' : p.status === 'fits' ? 'Fits ' + p.rods.join(' and ') : 'Light enough for the Kings AK3000A (no rod rating on record)'}</span></div>`).join('')}` : ''}
       ${plan.lureCheck.length ? `<div class="sub"><b>Your lures</b></div>${plan.lureCheck.map((l) => `<div class="sub ${l.level === 'warn' ? 'warnline' : ''}">${esc(l.text)}</div>`).join('')}` : ''}
       ${plan.notes.map((n) => `<div class="sub dim">${esc(n)}</div>`).join('')}
     </div>

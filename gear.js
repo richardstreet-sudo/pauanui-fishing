@@ -1,6 +1,6 @@
 // What to take: picks your rod/reel combos for the day's situation and checks lure weights against each rod's rating.
 // Pure logic (no DOM). Data lives in knowledge.js (COMBOS, MY_LURES).
-import { COMBOS, MY_LURES } from './knowledge.js';
+import { COMBOS, MY_LURES, LURE_INFO } from './knowledge.js';
 
 const byId = (id) => COMBOS.find((c) => c.id === id);
 const range = (g) => (g[0] === g[1] ? `${g[0]} g` : `${g[0]}–${g[1]} g`);
@@ -51,6 +51,7 @@ export function gearPlan(day, outlook, lures = MY_LURES) {
     ok: (n) => lvl(n) === 'Good' || lvl(n) === 'Fair',
   };
   const score = (n) => outlook.find((s) => s.name === n)?.score ?? 0;
+  const prioOf = score;
   const prio = (m) => score(m.species) + (m.id === 'kingHeavy' ? 0.5 : 0);
   const modes = MODES(o).filter((m) => m.when).sort((a, b) => prio(b) - prio(a));
 
@@ -66,17 +67,40 @@ export function gearPlan(day, outlook, lures = MY_LURES) {
 
   // Check every lure in your tackle box against every rated rod
   const rated = COMBOS.filter((c) => c.lureG);
-  const lureCheck = lures.map((l) => {
-    if (l.g == null) return { lure: l, level: 'warn', text: `⚠ ${l.name}: weight unconfirmed – weigh it or check the packet before pairing it with a rod.` };
+  const lureCheck = [];
+  const unconfirmed = [];
+  for (const l of lures) {
+    if (l.g == null) { unconfirmed.push(l.name); continue; }
     const fits = rated.filter((c) => fitOf(l.g, c) === 'fits'), over = rated.filter((c) => fitOf(l.g, c) === 'over'), under = rated.filter((c) => fitOf(l.g, c) === 'under');
     const heaviest = rated.reduce((a, c) => (c.lureG[1] > a.lureG[1] ? c : a));
-    if (!fits.length && over.length === rated.length) return { lure: l, level: 'warn', text: `⚠ ${l.name} ${l.g} g exceeds every rated rod (the closest, ${heaviest.name}, tops out at ${heaviest.lureG[1]} g). Don't use it on these.` };
+    if (!fits.length && over.length === rated.length) { lureCheck.push({ lure: l, level: 'warn', text: `⚠ ${l.name} ${l.g} g exceeds every rated rod (the closest, ${heaviest.name}, tops out at ${heaviest.lureG[1]} g). Don't use it on these.` }); continue; }
     const parts = [];
     if (fits.length) parts.push(`fits ${fits.map((c) => `${c.name} (${range(c.lureG)})`).join(' and ')}`);
     if (over.length) parts.push(`over the rating of ${over.map((c) => `${c.name} (max ${c.lureG[1]} g)`).join(' and ')}`);
     if (under.length) parts.push(`below the minimum of ${under.map((c) => `${c.name} (min ${c.lureG[0]} g)`).join(' and ')}`);
-    return { lure: l, level: over.length || under.length ? 'warn' : 'ok', text: `${l.name} ${l.g} g: ${parts.join('; ')}.` };
-  });
+    lureCheck.push({ lure: l, level: over.length || !fits.length ? 'warn' : 'ok', text: `${l.name} ${l.g} g: ${parts.join('; ')}.` });
+  }
+  if (unconfirmed.length) lureCheck.push({ level: 'warn', text: `⚠ Weight unconfirmed (weigh each or check the packet before pairing it with a rod): ${unconfirmed.join(', ')}.` });
+
+  // Lures to start with, by situation (your lure doc's cheat sheet), with the weight check applied
+  const find = (n) => lures.find((l) => l.name.toLowerCase() === n.toLowerCase());
+  const PICKS = [
+    { lure: 'Long John Slider', when: o.ok('Kingfish'), sp: 'Kingfish', why: 'aggressive kingfish or a fast drift' },
+    { lure: 'The Joker', when: o.ok('Kingfish'), sp: 'Kingfish', why: 'kingfish on the sounder but not chasing' },
+    { lure: 'Double Trouble', when: o.ok('Kingfish') || o.ok('Snapper'), sp: o.ok('Kingfish') ? 'Kingfish' : 'Snapper', why: 'when unsure – try both ends' },
+    { lure: 'Deep V', when: (o.ok('Kingfish') || o.ok('Snapper')) && o.spring, sp: 'Kingfish', boost: 5, why: 'spring tides mean strong current' },
+    { lure: 'Beta Bug', when: o.ok('Snapper') || o.ok('Gurnard'), sp: o.ok('Snapper') ? 'Snapper' : 'Gurnard', why: 'snapper and workups – slow grind or rod holder' },
+    { lure: 'Kabura', when: o.ok('Snapper') || o.ok('Gurnard'), sp: o.ok('Snapper') ? 'Snapper' : 'Gurnard', why: 'dead-slow wind over sand or mud' },
+    { lure: '20 g micro jigs', when: o.ok('Snapper') || o.ok('Trevally') || o.ok('Kahawai'), sp: o.ok('Snapper') ? 'Snapper' : o.ok('Trevally') ? 'Trevally' : 'Kahawai', why: 'shallows, surface schools and workups' },
+    { lure: 'Lil Squidwings', when: o.ok('Gurnard') || o.ok('Snapper'), sp: o.ok('Gurnard') ? 'Gurnard' : 'Snapper', why: 'drag the bottom over sand (the 200 g Squidwings is too heavy for your rods)' },
+    { lure: 'Coindrop', when: o.ok('Snapper') && !o.spring, sp: 'Snapper', why: 'finicky snapper in low current' },
+  ];
+  const picks = PICKS.filter((p) => p.when && find(p.lure)).map((p) => {
+    const l = find(p.lure);
+    const fitting = l.g == null ? [] : COMBOS.filter((c) => fitOf(l.g, c) === 'fits');
+    const status = l.g == null ? 'unconfirmed' : fitting.length ? 'fits' : COMBOS.every((c) => !c.lureG || fitOf(l.g, c) !== 'fits') && l.g <= 30 ? 'light' : 'noRod';
+    return { lure: l, why: p.why, how: LURE_INFO[l.name]?.how || '', status, rods: fitting.map((c) => c.name), prio: prioOf(p.sp) + (p.boost || 0) };
+  }).filter((p) => p.status !== 'noRod').sort((a, b) => b.prio - a.prio).slice(0, 6);
 
   const notes = [];
   if (o.spring && modes.some((m) => m.g)) notes.push('Spring tides mean more current: use the heavier end of each rod\'s lure range.');
@@ -84,7 +108,7 @@ export function gearPlan(day, outlook, lures = MY_LURES) {
   if (take.has('saltist6500h') && byId('saltist6500h').note) notes.push(`${byId('saltist6500h').name}: ${byId('saltist6500h').note}`);
 
   const jigging = modes.some((m) => ['snapperJig', 'workup', 'kingJig', 'kingHeavy'].includes(m.id));
-  return { take: [...take.values()], lureCheck: jigging ? lureCheck : [], notes, modes: modes.map((m) => m.id) };
+  return { take: [...take.values()], picks, lureCheck: jigging ? lureCheck : [], notes, modes: modes.map((m) => m.id) };
 }
 
 /** Parse the settings textarea: one lure per line, "name, grams" (grams may be blank = unknown). */

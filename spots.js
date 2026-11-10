@@ -8,6 +8,9 @@ export const ISLANDS = [
   { name: 'Slipper Island', lat: -37.049, lon: 175.945 },
   { name: 'Waipapa Island', lat: -36.9305, lon: 175.8595 },
   { name: 'Aldermen Islands', lat: -36.964, lon: 176.086 },
+  { name: 'Rangitoto Island', lat: -36.785, lon: 174.862 },
+  { name: 'Motutapu Island', lat: -36.76, lon: 174.9 },
+  { name: 'Motukorea', lat: -36.83, lon: 174.9 },
 ];
 
 const ok = (lat, lon) => (Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null);
@@ -124,10 +127,11 @@ export function shelter(windFrom, windKt, spots = []) {
  * Rank your tagged spots for today. For each spot take the best species that is Good/Fair today AND suits the
  * spot's habitat tags/depth (habitat fit comes from knowledge.js), then adjust for shelter and past success.
  */
-export function trySpots(spots, outlook, sh, hits, home) {
+export function trySpots(spots, outlook, sh, hits, home, blocked = () => false) {
   const lvlPts = { Good: 3, Fair: 1.5 };
   const out = [];
   for (const s of spots) {
+    if (blocked(s)) continue; // never suggest a spot inside a protected area
     const tags = s.habitat || [];
     const hist = hits.find((h) => h.spot.id === s.id);
     const near = sh?.near.find((n) => n.spot === s.name);
@@ -153,4 +157,19 @@ export function trySpots(spots, outlook, sh, hits, home) {
     out.push({ spot: s, score, best, notes, km: home ? km(home, s) : null });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, 5);
+}
+
+/** Tallies of your own trips (spot trips + loose trips) by tide stage, light and wind band – the feedback loop. */
+export function logStats(spots, loose = []) {
+  const trips = [...spots.flatMap((s) => (s.catches || []).map((c) => ({ ...c, spot: s.name }))), ...loose].filter((t) => t.conds);
+  const groups = { 'Tide': {}, 'Light': {}, 'Wind': {} };
+  const bump = (g, k, fish) => { if (!k) return; (groups[g][k] ||= { n: 0, fish: 0 }); groups[g][k].n++; if (fish) groups[g][k].fish++; };
+  for (const t of trips) {
+    const fish = t.result === 'fish';
+    bump('Tide', t.conds.stage, fish);
+    bump('Light', t.conds.light, fish);
+    bump('Wind', t.conds.wind == null ? null : t.conds.wind < 5 ? 'under 5 kt' : t.conds.wind < 10 ? '5–10 kt' : 'over 10 kt', fish);
+  }
+  const all = trips.length, fishTrips = trips.filter((t) => t.result === 'fish').length;
+  return { all, fishTrips, groups };
 }

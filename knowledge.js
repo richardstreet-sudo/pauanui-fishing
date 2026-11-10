@@ -203,14 +203,67 @@ export const COMBOS = [
 ];
 
 // Lures from your tackle box. g = null means the weight isn't confirmed (flagged, never paired automatically).
+// Weights known so far: Deep V 170 g and Squidwings 200 g (your notes), Lil Squidwings 28 g and the micro jigs 20 g (your lure doc).
 // Editable in ⚙︎ (one per line: name, grams – leave grams blank if unknown).
 export const MY_LURES = [
   { name: 'Deep V', g: 170 },
   { name: 'Squidwings', g: 200 },
+  { name: 'Lil Squidwings', g: 28 },
+  { name: '20 g micro jigs', g: 20 },
   { name: 'Long John Slider', g: null },
   { name: 'Double Trouble', g: null },
   { name: 'The Joker', g: null },
+  { name: 'Beta Bug', g: null },
+  { name: 'Boss Squid', g: null },
+  { name: 'The Boss', g: null },
+  { name: 'Kabura', g: null },
+  { name: 'Coindrop', g: null },
 ];
+
+// How each lure is worked and when it earns its place (from your own lure notes).
+export const LURE_INFO = {
+  'Long John Slider': { kind: 'mechanical knife jig', how: 'fast lift-and-wind (a turn of the handle per lift); if you feel bumps but no hook-up, speed up', best: 'aggressive kingfish, deep water, fast drift' },
+  'The Joker': { kind: 'long-fall jig', how: 'lift high, then drop the rod tip to the water so the line goes slack and it flutters on the fall; strike if the line stops falling', best: 'kingfish following but not biting, slower current' },
+  'Double Trouble': { kind: 'two-way jig', how: 'leader on the narrow end = fast and darting; blunt end = big flutter on the drop, lift-pause-drop', best: 'unsure what the fish want; lazy kingfish or snapper' },
+  'Deep V': { kind: 'keeled slow-pitch jig', how: 'lift and drop like The Boss but a bit faster; the keel cuts through current', best: 'deep water (40 m+) or strong tidal flow' },
+  'Squidwings': { kind: 'big skirted squid lure', how: 'drop, crank up 5–10 m, rod in holder, or a slow lift-and-lower; not for fast jigging', best: 'big kingfish, passive fishing' },
+  'Lil Squidwings': { kind: 'micro squid lure', how: 'cast and glide (lift slowly, wind down the slack), or crank up 2 m and rod in holder', best: 'snapper, kings in the shallows, gurnard over sand' },
+  '20 g micro jigs': { kind: 'micro jigs', how: 'flutter: lift ~1 m then drop the tip, most bites on the fall; or a fast mini-mechanical retrieve for kahawai', best: 'snapper, trevally, kahawai, gurnard; throw into workups (about anchovy size)' },
+  'Beta Bug': { kind: 'inchiku', how: 'slow grind (about a quarter to half a turn per second) or wind up 2 m and leave it in a rod holder', best: 'big snapper, gurnard, john dory' },
+  'Boss Squid': { kind: 'slow-pitch jig with an inchiku skirt', how: 'slow-pitch: lift gently, drop to glide back; the skirt pulses on the drop', best: 'big snapper on the sounder, kingfish feeding on squid' },
+  'The Boss': { kind: 'leaf slow-pitch jig', how: 'lift, then drop the rod tip for slack so it slides and flutters flat; watch the line', best: 'fussy fish in deeper water (30 m+)' },
+  'Kabura': { kind: 'sliding-head slider', how: 'drop to the bottom and wind painfully slowly (a turn every 2–3 s); ignore the tap-tap and only lift when the rod loads', best: 'snapper and gurnard over sand or mud, any water clarity; good in a rod holder' },
+  'Coindrop': { kind: 'flat micro leaf jig', how: 'shallow flutter on a semi-slack line, or short sharp lifts in deeper water', best: 'finicky snapper in low current or at slack tide' },
+};
+
+// Spots from your strategy doc whose positions I checked (not inside a protected area, and sensible for the place described).
+// They are NOT surveyed marks: confirm on your plotter before relying on them. The doc's "derived" marks that plotted in the
+// wrong place (South East Rock, Shoe Island Reef, Lens Pin, Sugar Loaf) and two inside protected areas (Noises North, Tiri Channel) are left out.
+export const SEED_SPOTS = [
+  { name: 'The 32', lat: -37.07532, lon: 176.02210, habitat: ['pinnacle', 'reef'], depth: 32, notes: 'Deep reef rising from ~70 m to 32 m, about 3.5 nm east of Slipper. Kingfish and snapper. 2.5 km from the Aldermen south protected area – watch your drift. Position from your strategy doc; confirm on the plotter.' },
+  { name: "Nick's Nest", lat: -37.0750, lon: 176.0190, habitat: ['foul'], depth: null, notes: 'Productive foul near The 32 – snapper, softbait or kabura. Position from your strategy doc; confirm on the plotter.' },
+  { name: 'North Pinnacles (Aldermen)', lat: -36.9375, lon: 176.1150, habitat: ['pinnacle', 'drop-off'], depth: 40, notes: 'Vertical rise from ~100 m to 40 m, big kingfish, heavy drag. Between the two Aldermen protected areas (2.7 km from the nearest) – check the map. Position from your strategy doc; confirm on the plotter.' },
+  { name: 'Opoutere Beach drop-off', lat: -37.0714, lon: 175.8899, habitat: ['sand or mud', 'drop-off'], depth: null, notes: 'Sandbar drop-off, snapper and kahawai. Position from your strategy doc; confirm on the plotter.' },
+  { name: 'The Barges (Rangitoto)', lat: -36.7854, lon: 174.8267, habitat: ['foul'], depth: null, notes: 'Old dredge-spoil ground with uneven bottom; winter snapper, drift with a kabura. Position from your strategy doc; confirm on the plotter.' },
+];
+
+// Your VHF quick-reference sheet. Check the channels against the current Coastguard list.
+export const VHF = {
+  channels: ['CH 16: distress and calling', 'CH 06 / 08: ship-to-ship (1 W power)'],
+  areas: [
+    { area: 'Auckland inner', coastguard: 64, weather: 19 },
+    { area: 'Auckland outer', coastguard: 60, weather: 20 },
+    { area: 'Pauanui', coastguard: 63, weather: 19 },
+  ],
+  mayday: [
+    '"MAYDAY, MAYDAY, MAYDAY – this is [ski name / callsign]" (three times)',
+    'POSITION: GPS or landmarks',
+    'DISTRESS: e.g. engine failure / sinking',
+    'PEOPLE: e.g. 2 persons on board wearing lifejackets',
+    'VESSEL: e.g. yellow Sea-Doo',
+    '"OVER" – then listen for a response, and repeat if there is none.',
+  ],
+};
 
 // ---- Bait and terminal gear (rod choices come from COMBOS via gear.js). when(ctx) -> boolean.
 export const GEAR = [

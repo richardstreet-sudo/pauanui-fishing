@@ -3,7 +3,7 @@ import { SOURCES, SPECIES, TIPS, GEAR } from './knowledge.js';
 import { parseCoords, parseGpx, tideStage, similarity, spotsForToday, shelter, trySpots, wetmapsUrl, logStats } from './spots.js';
 import { setAreas, protectedNear, insideProtected } from './protected.js';
 import { gearPlan, fitOf, rangeFit, parseLures } from './gear.js';
-import { COMBOS, MY_LURES } from './knowledge.js';
+import { COMBOS, MY_LURES, SEED_SPOTS, VHF } from './knowledge.js';
 import { tripCheck, shortWindow, turnsRedAt } from './plan.js';
 import { billyHo, parseMaoriCalendar, parseLinzCsv, applyTideOffsets } from './core.js';
 import { rateHour, buildDays, parseLinz, tidesFromModel, mergeTides, moonInfo, solunar, runoffFor, lureAdvice, speciesOutlook, diveOutlook, todaysTips, gearList, DEFAULTS } from './core.js';
@@ -230,11 +230,17 @@ eq(parseMaoriCalendar('Poor fishing on Sunday 1 November 2026\nExcellent fishing
   const txt = p.lureCheck.map((l) => l.text).join(' | ');
   eq(/Deep V 170 g: fits Shimano TranX 200HG/.test(txt) && /over the rating of Daiwa Saltist 6500H \(max 120 g\) and Daiwa Saltist MQ 4000D \(max 100 g\)/.test(txt), true, 'Deep V check text');
   eq(/Squidwings 200 g exceeds every rated rod/.test(txt), true, 'Squidwings flagged');
-  eq(/Long John Slider: weight unconfirmed/.test(txt) && /The Joker: weight unconfirmed/.test(txt), true, 'unknown weights unconfirmed');
+  eq(/Weight unconfirmed/.test(txt) && /Long John Slider/.test(txt) && /The Joker/.test(txt) && /Beta Bug/.test(txt), true, 'unknown weights unconfirmed');
+  eq(/20 g micro jigs 20 g: fits Daiwa Saltist MQ 4000D/.test(txt), true, '20 g micro jigs fit the 4000D (20 g minimum)');
+  eq(p.picks.some((x) => x.lure.name === 'Deep V' && x.status === 'fits' && x.rods.includes('Shimano TranX 200HG')), true, 'Deep V is picked on spring tides and fits the TranX');
+  eq(p.picks.some((x) => x.lure.name === 'Squidwings'), false, 'the 200 g Squidwings is never picked');
+  const calm = gearPlan({ date: '2026-11-14', moon: { tide: 'mid' } }, mkOut({ Snapper: 'Good', Kingfish: 'Fair' }), MY_LURES);
+  eq(calm.picks.some((x) => x.lure.name === 'Deep V'), false, 'no Deep V pick without strong current');
   p = gearPlan(day, mkOut({ Gurnard: 'Fair' }), MY_LURES);
   eq([p.take.map((x) => x.combo.name), p.lureCheck.length], [['Kings AK3000A'], 0], 'gurnard-only day: AK3000A, no jig lure check');
   eq(parseLures('Deep V, 170\nThe Joker,\nBig One, 95.5').map((l) => [l.name, l.g]), [['Deep V', 170], ['The Joker', null], ['Big One', 95.5]], 'lure parsing');
 }
+eq([SEED_SPOTS.length, VHF.areas.length], [5, 3], 'seed spots and VHF data present');
 // Try-today ranking: kingfish suits a pinnacle on an island point; a sand spot suits gurnard; untagged spots are skipped.
 {
   const outlook = [{ name: 'Kingfish', level: 'Fair' }, { name: 'Gurnard', level: 'Fair' }, { name: 'Snapper', level: 'Slow' }];

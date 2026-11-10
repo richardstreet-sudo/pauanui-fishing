@@ -2,8 +2,9 @@ import {
   DEFAULTS, fetchForecast, buildDays, tidesFromModel, parseLinz, parseLinzCsv, applyTideOffsets, mergeTides, nzNow,
   weekday, windowLabel, compass, dateOf, fmtMins, parseMaoriCalendar, lureAdvice, speciesOutlook, todaysTips, gearList,
 } from './core.js';
-import { SOURCES, SPECIES, HABITATS } from './knowledge.js';
+import { SOURCES, SPECIES, HABITATS, COMBOS, SEED_SPOTS, VHF } from './knowledge.js';
 import { setAreas, getAreas, protectedNear, insideProtected, KIND_TEXT, RULES_URL } from './protected.js';
+import { gearPlan, parseLures } from './gear.js';
 import { bestBet, gridModel, targetFor, tripCheck, turnsRedAt } from './plan.js';
 import { parseCoords, parseGpx, conditionsAt, spotsForToday, shelter, satelliteUrl, wetmapsUrl, km, trySpots, logStats, ISLANDS } from './spots.js';
 
@@ -13,7 +14,11 @@ const STRIP_FROM = 4, STRIP_TO = 21; // hours shown in the week strip (inclusive
 
 // ---------- state ----------
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
-let settings = { ...DEFAULTS, ...load('pf.settings', {}) };
+// Older versions saved the whole settings object (including the spot list), which hid newer default spots. Settings now
+// carry a version; anything older drops its saved spot list so the current defaults apply.
+const savedSettings = load('pf.settings', {});
+if (savedSettings.v !== 2) delete savedSettings.places;
+let settings = { ...DEFAULTS, ...savedSettings };
 // Saved spots keep their own name/position but pick up newer defaults (e.g. tide corrections) by name.
 settings.places = settings.places.map((p) => ({ ...(DEFAULTS.places.find((d) => d.name === p.name) || {}), ...p }));
 let linzText = localStorage.getItem('pf.linz') || '';
@@ -121,6 +126,22 @@ const maoriChip = (d) => {
   return `<span class="mp mp-${r || 'none'}" title="Māori fishing calendar: ${r || 'not loaded'}${ok ? '; best window matches Billy Ho\'s tide rule' : ''}">🌙${r ? MAORI_STARS[r] : ''}${ok ? '✓' : ''}</span> `;
 };
 
+
+const vhfHtml = () => `<details class="dsum"><summary><b>📻 VHF quick reference</b> <span class="dim">(tap)</span></summary>
+    ${VHF.channels.map((c) => `<div class="sub"><b>${esc(c)}</b></div>`).join('')}
+    <table class="vhf"><thead><tr><th>Area</th><th>Coastguard</th><th>Weather</th></tr></thead><tbody>${VHF.areas.map((r) => `<tr><td><b>${esc(r.area)}</b></td><td>${r.coastguard}</td><td>${r.weather}</td></tr>`).join('')}</tbody></table>
+    <div class="sub"><b>MAYDAY (channel 16)</b></div>
+    ${VHF.mayday.map((m) => `<div class="sub">• ${esc(m)}</div>`).join('')}
+    <div class="sub dim">From your own VHF sheet – check the channels against the current Coastguard list.</div>
+  </details>`;
+
+// Seed the spots whose positions were checked (once per seed version); you can rename or delete them in 📍.
+const SEED_V = 1;
+if ((+localStorage.getItem('pf.seedV') || 0) < SEED_V) {
+  for (const s of SEED_SPOTS) if (!spots.some((x) => x.name === s.name)) spots.push({ id: Math.random().toString(36).slice(2, 9), ...s, catches: [], created: 'seed' });
+  saveSpots(); localStorage.setItem('pf.seedV', SEED_V);
+}
+
 // ---------- first screen: answer first ----------
 const nzDay = (date) => `${weekday(date)} ${+date.slice(8)}`;
 const protectedHtml = (p) => {
@@ -139,6 +160,7 @@ function betHtml(b, title) {
     <div class="big"><b>${title}</b><span class="badge ${d.rating}">${lab[d.rating]}${d.warn ? ' ⚠' : ''}</span></div>
     <button class="bigline" data-pick="${esc(b.place.name)}|${d.date}">${nzDay(d.date)} · ${windowLabel(d.best)} · ${esc(b.place.name)} ›</button>
     ${t.top ? `<div class="sub"><b>Try:</b> ${t.top.name} (${t.top.level}) – ${t.quick}</div><div class="lures">${colourChips(b.colours)}</div>` : '<div class="sub"><b>Try:</b> nothing reads Good or Fair for fish – a low-expectation day.</div>'}
+    ${b.take.length ? `<div class="sub"><b>Take:</b> ${b.take.map(esc).join(' + ')}</div>` : ''}
     <div class="sub">${b.redAt ? `Conditions go red at ${String(b.redAt).padStart(2, '0')}:00 – be off before then.` : `Plan to be off by ${String(d.best.endH % 24).padStart(2, '0')}:00.`}${b.trip ? ` About ${b.trip.km} km from Pauanui: be back by ${b.trip.back}; ${b.trip.fuel}.` : ''}</div>
     <ul class="why">${b.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
     ${b.near.length ? `<div class="sub warnline">⚠ ${esc(b.place.name)} is near ${esc(b.near[0].area.name)} – check the map before choosing where to fish.</div>` : ''}
@@ -217,6 +239,7 @@ function weekView() {
   const estNote = weekIdx === 1 ? '<div class="hint dim">≈ Outlook only: this far out the forecast has wind, gusts and rain but no sea, swell or tide data (it runs out after about 9 days), so ratings use wind and rain only and sea height is unknown. Treat as a rough guide and re-check closer to the day.</div>' : '';
   app.innerHTML = `${topCards()}${wk}${estNote}<div class="axis"><div class="strip" style="--n:${cells}">${axis}</div></div>${rows}
     <div class="legend"><i class="GO"></i>GO<i class="MAYBE"></i>Maybe<i class="NOGO"></i>No-go<i class="win"></i>best window · kt · m · mm, daylight ranges, swell at window</div>
+    ${vhfHtml()}
     <div class="legend">🌙★★★ = Māori fishing calendar day rating (Excellent ★★★, Good ★★, Poor ★) · ✓ = best window is on the tide Billy Ho favours (waxing moon → outgoing, waning → incoming) · 🤿 = great dive day. ${Object.keys(maori).some((k) => k >= shown[0].date) ? '' : `Ratings not loaded (<a href="${SOURCES.maori.url}" target="_blank" rel="noopener">open calendar ↗</a>).`}</div>`;
 }
 
@@ -240,6 +263,7 @@ function dayView(date) {
   const outlook = speciesOutlook(d, settings);
   const tips = todaysTips(d, outlook, settings);
   const gear = gearList(d, outlook);
+  const plan = gearPlan(d, outlook, settings.lures);
   const tg = targetFor(d, settings);
   const refH = d.hours.find((h) => h.h === (d.best?.startH ?? 8));
   const sh = refH ? shelter(refH.wdir, refH.wind, spots) : null;
@@ -319,6 +343,13 @@ function dayView(date) {
       ${d.best ? `<div class="sub">${redAt ? `Conditions go red at ${String(redAt).padStart(2, '0')}:00 – be off before then.` : `Plan to be off by ${String(d.best.endH % 24).padStart(2, '0')}:00.`}</div>` : ''}
       ${trip ? `<div class="sub">${trip.km} km from Pauanui: be back on the beach by <b>${trip.back}</b> (an hour before sunset); ${trip.fuel}.</div>` : ''}
     </div>
+    <div class="dsum">
+      <div class="big"><b>What to take</b><span class="dim">your rods and reels</span></div>
+      ${plan.take.length ? plan.take.map((t) => `<div class="sub"><b>${t.combo.name}</b> <span class="dim">· ${t.combo.role} · ${esc(t.combo.rod)} · ${t.combo.rodSpec} · ${t.combo.braid} braid</span>${t.modes.map((m) => `<div class="sub">• ${m.title}: ${m.lure}${m.g ? ' ' + (m.g[0] === m.g[1] ? m.g[0] : m.g[0] + '–' + m.g[1]) + ' g' : ''} – ${m.fit.text}${m.alts.length ? `<div class="sub dim">Alternative: ${m.alts.map((x) => `${x.name} (${x.text})`).join('; ')}</div>` : ''}</div>`).join('')}</div>`).join('') : '<div class="sub">Nothing reads Fair or Good for fish, so just take your lightest outfit for a low-expectation session.</div>'}
+      ${plan.picks.length ? `<div class="sub"><b>Lures to start with</b></div>${plan.picks.map((p) => `<div class="sub">• <b>${esc(p.lure.name)}</b>${p.lure.g ? ' ' + p.lure.g + ' g' : ''} <span class="dim">(${p.why})</span>: ${p.how ? esc(p.how) + '. ' : ''}<span class="dim">${p.status === 'unconfirmed' ? '⚠ weight unconfirmed – weigh it before pairing with a rod' : p.status === 'fits' ? 'Fits ' + p.rods.join(' and ') : 'Light enough for the Kings AK3000A (no rod rating on record)'}</span></div>`).join('')}` : ''}
+      ${plan.lureCheck.length ? `<div class="sub"><b>Your lures</b></div>${plan.lureCheck.map((l) => `<div class="sub ${l.level === 'warn' ? 'warnline' : ''}">${esc(l.text)}</div>`).join('')}` : ''}
+      ${plan.notes.map((n) => `<div class="sub dim">${esc(n)}</div>`).join('')}
+    </div>
     ${heads.length ? `<div class="dsum warn"><div class="big"><b>Heads-up</b></div>${heads.map((x) => `<div class="sub">${x}</div>`).join('')}</div>` : ''}
     ${yourSpotsCard}
     <div class="dsum">
@@ -334,7 +365,8 @@ function dayView(date) {
       ${d.pressure ? `<div class="sub">Pressure ${d.pressure.hpa} hPa, ${d.pressure.trend} (${d.pressure.delta > 0 ? '+' : ''}${d.pressure.delta} over 6 h) – ${d.pressure.text}.</div>` : ''}
       <div class="sub dim">Because: ${lure.why}. Rule of thumb.</div>`)}
     ${d.outlook ? '' : det('More: dive outlook', `<div class="big"><span class="badge ${lvlClass(d.dive.level)}">${d.dive.level}${d.dive.window ? ' ' + windowLabel(d.dive.window) : ''}</span></div><div class="sub">${d.dive.why.join(' · ')}</div><div class="sub dim">Conditions only – midday sun, small swell, little recent rain, ideally slack water. Dive to your training.</div>`)}
-    ${det('More: what to take', gear.map((g) => `<div class="sub">• ${g.text}<div class="src">${srcLinks(g.src)}</div></div>`).join(''))}
+    ${det('More: bait and terminal gear', gear.map((g) => `<div class="sub">• ${g.text}<div class="src">${srcLinks(g.src)}</div></div>`).join(''))}
+    ${det('More: my rods and reels', COMBOS.map((c) => `<div class="sub"><b>${c.name}</b> (${c.role})<div class="sub dim">${esc(c.reel)}<br>${esc(c.rod)} · ${c.rodSpec}<br>Braid: ${c.braid}${c.spool ? ' · spool label ' + c.spool : ''}${c.note ? '<br>' + esc(c.note) : ''}</div></div>`).join(''))}
     ${det('More: getting live bait', `<div class="sub">Jack mackerel, koheru, piper, blue mackerel, small kahawai and mullet are the usual baits; around 100 mm suits kingfish, john dory and big snapper.</div>
       <div class="sub">Sabiki: always a sinker on the end, bring fish in as soon as hooked, twitch gently and vary depth; drop to a smaller size if there are no bites. Luminous beads need a light to recharge.</div>
       <div class="sub">Berley (bread/rice with crushed pilchard, in a mesh bag) draws bait; with berley use tiny baited hooks held still. At night a light on the water pulls in bait and its food.</div>
@@ -555,6 +587,7 @@ $('#gear').addEventListener('click', () => {
   form.places.value = places().map((p) => `${p.name}, ${p.lat}, ${p.lon}`).join('\n');
   form.linz.value = linzText;
   form.favs.value = settings.favs || '';
+  form.lures.value = (settings.lures || []).map((l) => `${l.name}, ${l.g ?? ''}`).join('\n');
   $('#linzhint').textContent = linzHint();
   $('#gridhint').textContent = cache ? `${cur().name}: Open-Meteo grid cells used: weather ${cache.grid.wx.map((v) => v.toFixed(2))}, marine ${cache.grid.marine.map((v) => v.toFixed(2))}.` : '';
   dlg.showModal();
@@ -572,11 +605,13 @@ form.addEventListener('submit', (e) => {
   const sameAsDefault = (ps) => JSON.stringify(ps.map((p) => [p.name, p.lat, p.lon])) === JSON.stringify(DEFAULTS.places.map((p) => [p.name, p.lat, p.lon]));
   if (parsed.length) next.places = sameAsDefault(parsed) ? DEFAULTS.places : parsed.map((p) => ({ ...(DEFAULTS.places.find((d) => d.name === p.name) || {}), ...p }));
   next.favs = form.favs.value;
+  const luresParsed = parseLures(form.lures.value);
+  next.lures = luresParsed.length ? luresParsed : DEFAULTS.lures;
   settings = next;
   placeIdx = Math.min(placeIdx, settings.places.length - 1);
   linzText = form.linz.value;
   // Store only what differs from the defaults, so later default improvements still reach this phone.
-  localStorage.setItem('pf.settings', JSON.stringify(Object.fromEntries(Object.entries(settings).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(DEFAULTS[k])))));
+  localStorage.setItem('pf.settings', JSON.stringify({ v: 2, ...Object.fromEntries(Object.entries(settings).filter(([k, v]) => k !== 'v' && JSON.stringify(v) !== JSON.stringify(DEFAULTS[k]))) }));
   localStorage.setItem('pf.linz', linzText);
   refresh(false);
 });

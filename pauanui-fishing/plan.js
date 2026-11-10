@@ -2,6 +2,7 @@
 import { windowLabel, fmtMins, speciesOutlook, lureAdvice } from './core.js';
 import { SPECIES } from './knowledge.js';
 import { protectedNear } from './protected.js';
+import { gearPlan } from './gear.js';
 
 const LVL = { Good: 3, Fair: 1.5, Slow: 0 };
 const MAORI = { Excellent: 1.5, Good: 0.5, Poor: -0.5 };
@@ -73,7 +74,7 @@ export function bestBet(entries, settings, maori = {}, today = null) {
     const lure = lureAdvice(d, settings);
     return {
       place: c.place, day: d, score: c.score, reasons: reasons.slice(0, 3), target: t,
-      colours: lure.main.slice(0, 2), redAt: turnsRedAt(d), near: c.near, trip: c.home <= 40 ? tripCheck(d, c.home, settings.skiRangeKm) : null,
+      take: gearPlan(d, c.out, settings.lures).take.map((t) => t.combo.name).slice(0, 3), colours: lure.main.slice(0, 2), redAt: turnsRedAt(d), near: c.near, trip: c.home <= 40 ? tripCheck(d, c.home, settings.skiRangeKm) : null,
     };
   };
   return { pick: detail(pick), alt: detail(alt) };

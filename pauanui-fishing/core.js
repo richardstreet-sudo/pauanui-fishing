@@ -1,5 +1,5 @@
 // Pure logic shared by the web app and the GitHub Action (ES module, no DOM).
-import { SPECIES, TIPS, GEAR } from './knowledge.js';
+import { SPECIES, TIPS, GEAR, MY_LURES } from './knowledge.js';
 
 export const DEFAULTS = {
   lat: -37.02,
@@ -17,6 +17,7 @@ export const DEFAULTS = {
     { name: 'Auckland Harbour', lat: -36.82, lon: 174.83, harbour: true, tide: { port: 'auckland', name: 'Auckland', hw: 0, lw: 0, ratio: 1 },
       note: 'Sea and swell here come from the open Hauraki Gulf about 12 km north, so inside the harbour it is usually more sheltered – but wind chop is not modelled. Offshore-wind and wind-against-tide flags are switched off here.' },
   ],
+  lures: MY_LURES,  // your tackle box: name + grams (null = weight unconfirmed)
   skiRangeKm: 0,    // full-tank range, for the fuel check on far spots (0 = not set)
   diveSea: 0.6,     // m – "great dive day" needs total sea at/below this
   diveSwell: 0.6,   // m

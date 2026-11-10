@@ -92,3 +92,5 @@ header{padding-left:max(12px,calc((100vw - 760px)/2));padding-right:max(12px,cal
 .ghead span{font-size:10.5px;text-align:center;color:var(--mute);line-height:1.1}
 .cell{border-radius:6px;padding:7px 0;font-size:10.5px;font-weight:700;color:#06121d;text-align:center}.cell.GO{background:var(--go)}.cell.MAYBE{background:var(--maybe)}.cell.NOGO{background:var(--nogo);color:#fff}.cell.est{opacity:.55}.cell sup{font-size:8px}
 .logbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:var(--card);border-radius:12px;padding:8px 10px;margin:8px 0;font-size:13.5px}.logbar select{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px;width:auto}.logbar button{background:var(--bg);border-radius:10px;padding:8px 12px;font-size:14px}.logbar .save{background:var(--go);color:#06121d;font-weight:700;margin-top:0}
+
+table.vhf{width:100%;margin:6px 0;font-size:14px}table.vhf th,table.vhf td{padding:5px 6px;text-align:left;border-top:1px solid var(--line)}

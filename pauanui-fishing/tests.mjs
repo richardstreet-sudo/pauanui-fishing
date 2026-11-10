@@ -2,6 +2,8 @@
 import { SOURCES, SPECIES, TIPS, GEAR } from './knowledge.js';
 import { parseCoords, parseGpx, tideStage, similarity, spotsForToday, shelter, trySpots, wetmapsUrl, logStats } from './spots.js';
 import { setAreas, protectedNear, insideProtected } from './protected.js';
+import { gearPlan, fitOf, rangeFit, parseLures } from './gear.js';
+import { COMBOS, MY_LURES, SEED_SPOTS, VHF } from './knowledge.js';
 import { tripCheck, shortWindow, turnsRedAt } from './plan.js';
 import { billyHo, parseMaoriCalendar, parseLinzCsv, applyTideOffsets } from './core.js';
 import { rateHour, buildDays, parseLinz, tidesFromModel, mergeTides, moonInfo, solunar, runoffFor, lureAdvice, speciesOutlook, diveOutlook, todaysTips, gearList, DEFAULTS } from './core.js';
@@ -210,6 +212,35 @@ eq(parseMaoriCalendar('Poor fishing on Sunday 1 November 2026\nExcellent fishing
   const ls = logStats([{ name: 'A', catches: [{ result: 'fish', conds: { stage: 'ebbing', light: 'dawn', wind: 6 } }, { result: 'blank', conds: { stage: 'ebbing', light: 'day', wind: 12 } }] }], [{ result: 'fish', conds: { stage: 'flooding', light: 'dawn', wind: 3 } }]);
   eq([ls.all, ls.fishTrips, ls.groups.Tide.ebbing.n, ls.groups.Light.dawn.fish], [3, 2, 2, 2], 'log stats tallies');
 }
+// Gear: rod ratings, lure checks and situation-based recommendations.
+{
+  const by = (id) => COMBOS.find((c) => c.id === id);
+  eq(fitOf(170, by('tranx200hg')), 'fits', 'Deep V 170 g fits the TranX/Backbone');
+  eq([fitOf(170, by('saltist6500h')), fitOf(170, by('saltistmq4000d'))], ['over', 'over'], 'Deep V 170 g is over the 6500H and 4000D rods');
+  eq(fitOf(200, by('tranx200hg')), 'over', '200 g Squidwings exceeds even the Backbone (180 g)');
+  eq(fitOf(null, by('tranx200hg')), 'unknown', 'unknown weight is flagged');
+  eq(fitOf(30, by('ak3000a')), 'norating', 'AK3000A has no lure rating');
+  eq(rangeFit([60, 90], by('saltistmq4000d')).status, 'fits', '60-90 g slow-jigs fit the 4000D rod');
+  eq(rangeFit([100, 150], by('saltist6500h')).status, 'partial', '100-150 g partly exceeds the 6500H');
+  const mkOut = (lv) => ['Snapper', 'Kingfish', 'Gurnard', 'Kahawai', 'Trevally', 'John dory'].map((n, i) => ({ name: n, level: lv[n] || 'Slow', score: lv[n] === 'Good' ? 8 : lv[n] === 'Fair' ? 4 : 0 }));
+  const day = { date: '2026-11-14', moon: { tide: 'spring' } };
+  let p = gearPlan(day, mkOut({ Snapper: 'Good', Kingfish: 'Fair' }), MY_LURES);
+  const names = p.take.map((x) => x.combo.name);
+  eq(names.includes('Daiwa Saltist MQ 4000D') && names.includes('Daiwa Saltist 6500H') && names.includes('Shimano TranX 200HG'), true, 'snapper+kingfish in Nov: 4000D, 6500H and TranX: ' + names);
+  const txt = p.lureCheck.map((l) => l.text).join(' | ');
+  eq(/Deep V 170 g: fits Shimano TranX 200HG/.test(txt) && /over the rating of Daiwa Saltist 6500H \(max 120 g\) and Daiwa Saltist MQ 4000D \(max 100 g\)/.test(txt), true, 'Deep V check text');
+  eq(/Squidwings 200 g exceeds every rated rod/.test(txt), true, 'Squidwings flagged');
+  eq(/Weight unconfirmed/.test(txt) && /Long John Slider/.test(txt) && /The Joker/.test(txt) && /Beta Bug/.test(txt), true, 'unknown weights unconfirmed');
+  eq(/20 g micro jigs 20 g: fits Daiwa Saltist MQ 4000D/.test(txt), true, '20 g micro jigs fit the 4000D (20 g minimum)');
+  eq(p.picks.some((x) => x.lure.name === 'Deep V' && x.status === 'fits' && x.rods.includes('Shimano TranX 200HG')), true, 'Deep V is picked on spring tides and fits the TranX');
+  eq(p.picks.some((x) => x.lure.name === 'Squidwings'), false, 'the 200 g Squidwings is never picked');
+  const calm = gearPlan({ date: '2026-11-14', moon: { tide: 'mid' } }, mkOut({ Snapper: 'Good', Kingfish: 'Fair' }), MY_LURES);
+  eq(calm.picks.some((x) => x.lure.name === 'Deep V'), false, 'no Deep V pick without strong current');
+  p = gearPlan(day, mkOut({ Gurnard: 'Fair' }), MY_LURES);
+  eq([p.take.map((x) => x.combo.name), p.lureCheck.length], [['Kings AK3000A'], 0], 'gurnard-only day: AK3000A, no jig lure check');
+  eq(parseLures('Deep V, 170\nThe Joker,\nBig One, 95.5').map((l) => [l.name, l.g]), [['Deep V', 170], ['The Joker', null], ['Big One', 95.5]], 'lure parsing');
+}
+eq([SEED_SPOTS.length, VHF.areas.length], [5, 3], 'seed spots and VHF data present');
 // Try-today ranking: kingfish suits a pinnacle on an island point; a sand spot suits gurnard; untagged spots are skipped.
 {
   const outlook = [{ name: 'Kingfish', level: 'Fair' }, { name: 'Gurnard', level: 'Fair' }, { name: 'Snapper', level: 'Slow' }];

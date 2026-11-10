@@ -74,6 +74,7 @@ const W = [6, 7, 8, 9, 10]; // winter to early spring
 export const SPECIES = [
   {
     name: 'Snapper', goodAt: 7, fairAt: 4,
+    quick: 'Slow-jig (inchiku/kabura 60–90 g) or a 4" soft plastic in pink or orange, near the bottom over sand or foul – and stay for the change of light.',
     season: 'Peak Oct–Dec (big fish inshore feeding up, then spawning in summer – schooling up at ~16–18°C, several times through the warm months); good Jan–May (autumn anchovy runs); from May–June most head to deeper water, but ~20–25% hold inshore in shallow foul.',
     months: [[[10, 11, 12], 3], [[1, 2, 3, 4, 5], 2], [[9], 1]], monthDefault: 0,
     sst: [[17, 22, 2], [15, 24, 1], [null, 13, -1]],
@@ -90,6 +91,7 @@ export const SPECIES = [
   },
   {
     name: 'Kingfish', goodAt: 5, fairAt: 3,
+    quick: 'A stickbait or jig on the up-current edge of a reef or pin, early; live koheru or jack mackerel if you have the kit.',
     season: 'Best Dec–May; a good run of jigging around late Oct–Nov; fewer in winter. Sources differ on spawning – offshore in late winter/early spring, or around Dec–Jan – but agree it is well offshore and little is known.',
     months: [[[12, 1, 2, 3, 4, 5], 2], [[10, 11], 1]], monthDefault: 0,
     sst: [[19, null, 2], [17, null, 1]],
@@ -101,6 +103,7 @@ export const SPECIES = [
   },
   {
     name: 'Gurnard', goodAt: 4, fairAt: 2,
+    quick: 'Drift a two-hook ledger or pink flasher rig with fish strips over sand or mud in moving water.',
     season: 'Prime Jun–Oct (gather to feed before spawning); spawn over a long spring–summer period, peaking early summer (Christmas catches can be almost all roe-laden females); dislike warm water.',
     months: [[W, 2]], monthDefault: 1,
     sst: [[null, 18, 1], [21, null, -1]],
@@ -111,6 +114,7 @@ export const SPECIES = [
   },
   {
     name: 'Kahawai', goodAt: 4, fairAt: 3,
+    quick: 'A small silver jig or soft plastic cast into birds and surface schools around the islands.',
     season: 'Year-round; best spring and autumn (around Easter) when chasing baitfish. Thought to spawn offshore in mid–late summer (ripe fish Jan–Apr).',
     months: [[[3, 4, 5, 9, 10, 11], 2]], monthDefault: 1,
     light: { low: 2, mixed: 1 }, clarity: { muddy: -1 },
@@ -120,6 +124,7 @@ export const SPECIES = [
   },
   {
     name: 'Trevally', goodAt: 4, fairAt: 3,
+    quick: 'Berley and light line with small baits or a 4" grub along the bottom.',
     season: 'Year-round; surface schools on krill/anchovies in warm months, on the bottom in autumn, up in harbours and estuaries in winter.',
     months: [[W, 2]], monthDefault: 1,
     light: { low: 2, mixed: 1 }, overcast: 1,
@@ -129,8 +134,9 @@ export const SPECIES = [
   },
   {
     name: 'John dory', goodAt: 2, fairAt: 1,
+    quick: 'A slow soft plastic on shallow foul, or a live jack mackerel near a berley trail.',
     season: 'Best in winter and early spring (Jun–Sep); harder to find Dec–Apr (spawning).',
-    months: [[[6, 7, 8, 9], 2], [[12, 1, 2, 3, 4], 0]], monthDefault: 1, seasonOnly: true,
+    months: [[[6, 7, 8, 9], 2]], monthDefault: 0, seasonOnly: true,
     tip: 'Slow soft-plastics (grub tails, light heads) on shallow foul, or a live jack mackerel (~100 mm) on a ledger rig near a berley trail. Net it – their mouths are thin.',
     habitat: { tags: { foul: 2, reef: 1 }, depth: [2, 30] },
     src: ['pgDory', 'dory', 'lureBait'],
@@ -177,14 +183,40 @@ export const TIPS = [
     src: ['notBiting', 'bite'] },
 ];
 
-// ---- What to take. when(ctx) -> boolean; ctx also has `lvl(name)` = outlook level and `lure` colour picks.
+// ---- Your rods and reels. Each combo is named by its reel. lureG = the rod's stated lure-weight rating in grams
+// (null = no lure rating found, so weights can't be checked for it). From your own notes.
+export const COMBOS = [
+  { id: 'ak3000a', name: 'Kings AK3000A', reel: 'Kings AK3000A, spin, 3+ bearings',
+    rod: 'Kings Traveller 7244L, 7\'2"', rodSpec: 'line 4–8 lb', lureG: null,
+    braid: 'lime', spool: '6 lb/270 yd, 10 lb/185 yd, about 12 lb', role: 'light snapper',
+    note: 'No lure-weight rating found for this rod. It is only suggested for light soft plastics and micro-jigs – check the blank before trusting a weight.' },
+  { id: 'saltist6500h', name: 'Daiwa Saltist 6500H', reel: 'Daiwa Saltist 6500H, spin, 6.2:1, max drag about 33 lb',
+    rod: 'Daiwa Saltist ST762H, 7\'6", 2-piece', rodSpec: 'lure 40–120 g, line 24 kg', lureG: [40, 120],
+    braid: 'multicolour', spool: '25 lb/300 m, 30 lb/250 m', role: 'main kingfish',
+    note: 'No separate vertical-jig rating found, so only the 40–120 g lure range is used.' },
+  { id: 'saltistmq4000d', name: 'Daiwa Saltist MQ 4000D', reel: 'Daiwa Saltist MQ 4000D, spin',
+    rod: 'Daiwa Saltist Bluewater 66BJS slow jigging rod (marked B66BJS), 6\'6"', rodSpec: 'lures 20–100 g, PE 1–2', lureG: [20, 100],
+    braid: 'pale yellow', spool: '', role: 'main snapper', note: '' },
+  { id: 'tranx200hg', name: 'Shimano TranX 200HG', reel: 'Shimano TranX 200HG, baitcaster',
+    rod: 'Shimano Backbone Slow Pitch OH, 6\'3", 1-piece', rodSpec: '15–30 lb, 100–180 g', lureG: [100, 180],
+    braid: 'purple/yellow', spool: '', role: 'heavier kingfish jigs', note: '' },
+];
+
+// Lures from your tackle box. g = null means the weight isn't confirmed (flagged, never paired automatically).
+// Editable in ⚙︎ (one per line: name, grams – leave grams blank if unknown).
+export const MY_LURES = [
+  { name: 'Deep V', g: 170 },
+  { name: 'Squidwings', g: 200 },
+  { name: 'Long John Slider', g: null },
+  { name: 'Double Trouble', g: null },
+  { name: 'The Joker', g: null },
+];
+
+// ---- Bait and terminal gear (rod choices come from COMBOS via gear.js). when(ctx) -> boolean.
 export const GEAR = [
-  { text: 'Short light-to-medium spin outfit (4–6 kg braid) so you don\'t high-stick on a ski; 3–4" grub tails/jerk shads, a few jig-head weights, and a pre-rigged spare with a micro-jig or kabura.', when: () => true, src: ['jetTech', 'winterTactics'] },
-  { text: 'Slow-jigs (inchiku/kabura 60–90 g inshore, micro-jigs up to 28 g) with a squid-strip tip on the assist hook; drag no more than ~2 kg for micro-jigs.', when: (c) => c.fair('Snapper'), src: ['begLures'] },
-  { text: 'A 100–150 g orange slider in case you find a workup.', when: (c) => c.fair('Snapper') && c.month >= 9 && c.month <= 12, src: ['workup'] },
-  { text: 'Stickbait for kingfish (darker on bright days, orange/pink when dull) and a jig; big softbaits need 24–37 kg gear and 6–8 oz heads – check your ski can carry them.', when: (c) => c.fair('Kingfish'), src: ['poppers', 'kingBig', 'jetTech'] },
+  { text: 'Slow-jigs usually get a squid-strip tip on the assist hook; drag no more than ~2 kg for micro-jigs.', when: (c) => c.fair('Snapper'), src: ['begLures'] },
   { text: 'Live-bait kit: sabiki rigs (with sinker, in several sizes), bucket with aerator or a plumbed bin, dip net, berley bag.', when: (c) => c.fair('Kingfish') || c.fair('John dory'), src: ['baitfish', 'jetLive', 'lureBait'] },
-  { text: 'Two-hook ledger or pink flasher rig with 2/0–5/0 recurve hooks, thumb-sized strips of skipjack/mullet, or an orange slider.', when: (c) => c.fair('Gurnard'), src: ['gurnardAll', 'tough'] },
-  { text: 'Small metal jigs (7–28 g) and a mini stickbait for kahawai/trevally schools; light fluorocarbon trace.', when: (c) => c.fair('Kahawai') || c.fair('Trevally'), src: ['trevally', 'kahawai'] },
+  { text: 'Gurnard: two-hook ledger or pink flasher rig with 2/0–5/0 recurve hooks, thumb-sized strips of skipjack/mullet, or an orange slider.', when: (c) => c.fair('Gurnard'), src: ['gurnardAll', 'tough'] },
+  { text: 'Kahawai and trevally: light fluorocarbon trace, and a mini stickbait for surface schools.', when: (c) => c.fair('Kahawai') || c.fair('Trevally'), src: ['trevally', 'kahawai'] },
   { text: 'Pre-cut frozen baits from home (pilchard, skipjack); fresh jack mackerel for bigger predators.', when: () => true, src: ['jetTech'] },
 ];

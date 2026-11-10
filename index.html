@@ -44,15 +44,18 @@
       <label>MAYBE tolerance <input name="maybeFactor" type="number" step="0.05" inputmode="decimal"></label>
       <p class="hint">MAYBE = over a limit by less than this factor (1.25 = 25%). Beyond that is NO-GO.</p>
     </fieldset>
+    <fieldset><legend>Ski</legend>
+      <label>Full-tank range (km) <input name="skiRangeKm" type="number" step="any" inputmode="decimal"></label>
+      <p class="hint">0 = not set. Used for the rule-of-thirds fuel check on far spots (a third out, a third back, a third spare).</p>
+    </fieldset>
     <fieldset><legend>Lures</legend>
+      <textarea name="lures" rows="5" placeholder="My lures – one per line: name, grams (leave grams blank if unknown)"></textarea>
+      <p class="hint">Lures are checked against each rod's lure rating. Blank grams = shown as "unconfirmed".</p>
       <label>Favourite colours <input name="favs" type="text" placeholder="e.g. pink, gold" style="width:170px"></label>
     </fieldset>
-    <fieldset><legend>Māori fishing calendar</legend>
-      <textarea name="maori" rows="3" placeholder="Open the Māori fishing calendar page, select all, copy, and paste it here. Stays on this phone."></textarea>
-      <p class="hint" id="maorihint"></p>
-    </fieldset>
-    <fieldset><legend>Tides – paste LINZ predictions</legend>
-      <textarea name="linz" rows="6" placeholder="Paste LINZ tide table text for Tairua/Pauanui here. Dates + 'time height' pairs are detected automatically. Empty = use modelled tides."></textarea>
+    <fieldset><legend>Tides</legend>
+      <p class="hint">Tides come from LINZ's official Tauranga predictions (bundled, 2026–2029) with LINZ's Tairua / Slipper Island time corrections. Pasting below overrides them.</p>
+      <textarea name="linz" rows="4" placeholder="Optional override: paste LINZ tide table text here."></textarea>
       <p class="hint" id="linzhint"></p>
     </fieldset>
     <div class="row"><button value="save" id="save">Save</button><button value="reset" id="reset" type="button">Reset</button><button value="cancel">Close</button></div>

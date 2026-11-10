@@ -1,15 +1,24 @@
 // Pure logic shared by the web app and the GitHub Action (ES module, no DOM).
-import { SPECIES, TIPS, GEAR } from './knowledge.js';
+import { SPECIES, TIPS, GEAR, MY_LURES } from './knowledge.js';
 
 export const DEFAULTS = {
   lat: -37.02,
   lon: 175.89,
   // Spots you fish; each gets its own forecast. Open-Meteo's marine grid is ~8 km, so nearby spots can share cells.
+  // LINZ secondary-port corrections applied to the Tauranga standard-port predictions (LINZ NZNA secondary ports 2026-27).
+  tide: { port: 'tauranga', name: 'Tairua', hw: 7, lw: 18, ratio: 1 },
   places: [
-    { name: 'Shoe / Slipper', lat: -37.02, lon: 175.93 },
+    { name: 'Shoe / Slipper', lat: -37.02, lon: 175.93, tide: { port: 'tauranga', name: 'Slipper Island', hw: -38, lw: -10, ratio: 1 } },
     { name: 'Boat Cove', lat: -36.93, lon: 175.86 }, // just off Waipapa Island (island centre; refine in settings)
-    { name: 'Aldermen', lat: -36.96, lon: 176.086 },
+    { name: 'Aldermen', lat: -36.96, lon: 176.086,
+      limits: { windMax: 8, gustMax: 12, seaMax: 0.6 },
+      note: 'About 19 km out: stricter limits apply here (wind 8, gusts 12, sea 0.6 m) – and much of the water around the islands is a protected area, so check the map.' },
+    // Waitematā: LINZ Auckland is a primary port (no correction). Marine forecast cells are ~12 km north in the open Gulf.
+    { name: 'Auckland Harbour', lat: -36.82, lon: 174.83, harbour: true, tide: { port: 'auckland', name: 'Auckland', hw: 0, lw: 0, ratio: 1 },
+      note: 'Sea and swell here come from the open Hauraki Gulf about 12 km north, so inside the harbour it is usually more sheltered – but wind chop is not modelled. Offshore-wind and wind-against-tide flags are switched off here.' },
   ],
+  lures: MY_LURES,  // your tackle box: name + grams (null = weight unconfirmed)
+  skiRangeKm: 0,    // full-tank range, for the fuel check on far spots (0 = not set)
   diveSea: 0.6,     // m – "great dive day" needs total sea at/below this
   diveSwell: 0.6,   // m
   windMax: 10,      // kt  – GO below this
@@ -410,7 +419,7 @@ export function todaysTips(day, outlook, L = DEFAULTS) {
     month: +day.date.slice(5, 7), startH: day.best?.startH ?? null, hasWindow: !!day.best, rating: day.rating,
     turnInWindow: !!day.best && day.hours.some((h) => h.h >= day.best.startH && h.h < day.best.endH && h.turn),
     moon: day.moon, runoff: day.runoff, outlook, sst: day.hours.find((h) => h.h === 12)?.sst ?? null,
-    km: day.loc && home ? kmBetween(day.loc, [home.lat, home.lon]) : 0, billy: day.billy, farOut: day.outlook,
+    km: (() => { const d = day.loc && home ? kmBetween(day.loc, [home.lat, home.lon]) : 0; return d > 40 ? 0 : d; })(), // different region: no 'far from Pauanui' tip billy: day.billy, farOut: day.outlook,
   };
   return TIPS.filter((t) => t.when(ctx)).map((t) => ({ id: t.id, text: typeof t.text === 'function' ? t.text(ctx) : t.text, src: t.src }));
 }
@@ -510,6 +519,41 @@ export function tidesFromModel(hours) {
   return out;
 }
 
+/** Mark each event H or L by comparing with its neighbours. */
+export function classifyHL(events) {
+  events.forEach((e, i) => {
+    const p = events[i - 1], n = events[i + 1];
+    const higherThanPrev = !p || e.m > p.m, higherThanNext = !n || e.m > n.m;
+    e.type = (p && n ? higherThanPrev && higherThanNext : p ? higherThanPrev : higherThanNext) ? 'H' : 'L';
+  });
+  return events;
+}
+
+/** LINZ primary-port yearly CSV (e.g. Tauranga 2026.csv): `day,Wk,month,year,time,height,time,height,...`. */
+export function parseLinzCsv(text) {
+  const out = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = line.match(/^(\d{1,2}),[A-Za-z]{2},(\d{1,2}),(\d{4}),(.*)$/);
+    if (!m) continue;
+    const cells = m[4].split(',').map((x) => x.trim());
+    for (let i = 0; i + 1 < cells.length; i += 2) {
+      if (!/^\d{1,2}:\d{2}$/.test(cells[i]) || cells[i + 1] === '') continue;
+      out.push({ t: `${m[3]}-${pad(+m[2])}-${pad(+m[1])}T${cells[i].padStart(5, '0')}`, m: parseFloat(cells[i + 1]), src: 'LINZ' });
+    }
+  }
+  out.sort((a, b) => (a.t < b.t ? -1 : 1));
+  return classifyHL(out);
+}
+
+/** Convert standard-port events to a secondary port using LINZ time differences (minutes) and height ratio. */
+export function applyTideOffsets(events, off = DEFAULTS.tide) {
+  return events.map((e) => ({
+    ...e,
+    t: fromMs(toMs(e.t) + (e.type === 'H' ? off.hw : off.lw) * 60000),
+    m: +(e.m * (off.ratio ?? 1)).toFixed(2),
+  }));
+}
+
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
 /** Tolerant parser for pasted LINZ tide predictions (any text with dates followed by "time height" pairs). */
@@ -536,12 +580,7 @@ export function parseLinz(text) {
     }
   }
   events.sort((a, b) => (a.t < b.t ? -1 : 1));
-  events.forEach((e, i) => {
-    const p = events[i - 1], n = events[i + 1];
-    const higherThanPrev = !p || e.m > p.m, higherThanNext = !n || e.m > n.m;
-    e.type = (p && n ? higherThanPrev && higherThanNext : p ? higherThanPrev : higherThanNext) ? 'H' : 'L';
-  });
-  return events;
+  return classifyHL(events);
 }
 
 /** LINZ events win for any date they cover; the model fills the rest. */

@@ -1,9 +1,12 @@
 import {
-  DEFAULTS, fetchForecast, buildDays, tidesFromModel, parseLinz, mergeTides, nzNow,
+  DEFAULTS, fetchForecast, buildDays, tidesFromModel, parseLinz, parseLinzCsv, applyTideOffsets, mergeTides, nzNow,
   weekday, windowLabel, compass, dateOf, fmtMins, parseMaoriCalendar, lureAdvice, speciesOutlook, todaysTips, gearList,
 } from './core.js';
-import { SOURCES, SPECIES, HABITATS } from './knowledge.js';
-import { parseCoords, parseGpx, conditionsAt, spotsForToday, shelter, satelliteUrl, wetmapsUrl, km, trySpots, ISLANDS } from './spots.js';
+import { SOURCES, SPECIES, HABITATS, COMBOS } from './knowledge.js';
+import { setAreas, getAreas, protectedNear, insideProtected, KIND_TEXT, RULES_URL } from './protected.js';
+import { gearPlan, parseLures } from './gear.js';
+import { bestBet, gridModel, targetFor, tripCheck, turnsRedAt } from './plan.js';
+import { parseCoords, parseGpx, conditionsAt, spotsForToday, shelter, satelliteUrl, wetmapsUrl, km, trySpots, logStats, ISLANDS } from './spots.js';
 
 const $ = (s) => document.querySelector(s);
 const app = $('#app'), statusEl = $('#status'), h1 = $('#h1'), back = $('#back');
@@ -11,7 +14,13 @@ const STRIP_FROM = 4, STRIP_TO = 21; // hours shown in the week strip (inclusive
 
 // ---------- state ----------
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
-let settings = { ...DEFAULTS, ...load('pf.settings', {}) };
+// Older versions saved the whole settings object (including the spot list), which hid newer default spots. Settings now
+// carry a version; anything older drops its saved spot list so the current defaults apply.
+const savedSettings = load('pf.settings', {});
+if (savedSettings.v !== 2) delete savedSettings.places;
+let settings = { ...DEFAULTS, ...savedSettings };
+// Saved spots keep their own name/position but pick up newer defaults (e.g. tide corrections) by name.
+settings.places = settings.places.map((p) => ({ ...(DEFAULTS.places.find((d) => d.name === p.name) || {}), ...p }));
 let linzText = localStorage.getItem('pf.linz') || '';
 let caches = load('pf.caches', {});
 let placeIdx = Math.max(0, +(localStorage.getItem('pf.place') || 0));
@@ -20,16 +29,60 @@ const cur = () => places()[Math.min(placeIdx, places().length - 1)];
 const keyOf = (p) => `${p.lat},${p.lon}`;
 let cache = caches[keyOf(cur())] || null;
 let days = [], tides = [], showNight = false, weekIdx = 0;
+let trips = load('pf.trips', []); // one-tap logs made without a GPS fix
 let spots = load('pf.spots', []);
-let maori = load('pf.maori', {});
+let maori = {}; // loaded from data/maori.json (fishing.net.nz Māori fishing calendar, 2026-2028)
+async function loadProtected() {
+  try { const r = await fetch('data/protected.json'); if (r.ok) { setAreas(await r.json()); render(); } } catch { /* offline: warnings just won't show */ }
+}
+async function loadMaori() {
+  try { const r = await fetch('data/maori.json'); if (r.ok) { maori = await r.json(); render(); } } catch { /* offline: chips just don't show */ }
+}
 const MAORI_STARS = { Excellent: '★★★', Good: '★★', Poor: '★' };
 const saveSpots = () => localStorage.setItem('pf.spots', JSON.stringify(spots));
 const esc = (x) => String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// ---------- data: every spot is loaded so the first screen can compare them ----------
+const officialRaw = {}; // `${port}-${year}` -> LINZ events
+const tideFor = (p) => p.tide || settings.tide;
+const tideCorrection = () => tideFor(cur());
+// Per-spot rules: stricter limits for far spots, and no open-coast wind flags inside the harbour.
+const rulesFor = (p) => ({ ...settings, ...(p.limits || {}), ...(p.harbour ? { offshoreMinWind: 1e9, opposedMinWind: 1e9 } : {}) });
+const homePt = () => ({ lat: settings.lat, lon: settings.lon });
+const placeData = {}; // spot name -> { cache, tides, days }
+
+async function ensureOfficial() {
+  let added = false;
+  for (const p of places()) {
+    const fc = caches[keyOf(p)];
+    if (!fc) continue;
+    const port = tideFor(p).port || 'tauranga';
+    for (const y of new Set(fc.hours.map((h) => h.date.slice(0, 4)))) {
+      const key = `${port}-${y}`;
+      if (officialRaw[key]) continue;
+      try {
+        const r = await fetch(`data/${key}.csv`);
+        if (!r.ok) continue;
+        officialRaw[key] = parseLinzCsv(await r.text()); added = true;
+      } catch { /* offline first run: model tides still work */ }
+    }
+  }
+  if (added) { recompute(); render(); }
+}
+
+function computePlace(p) {
+  const fc = caches[keyOf(p)];
+  if (!fc) return null;
+  const corr = tideFor(p), port = corr.port || 'tauranga';
+  const official = applyTideOffsets(Object.entries(officialRaw).filter(([k]) => k.startsWith(port + '-')).flatMap(([, v]) => v).sort((x, y) => (x.t < y.t ? -1 : 1)), corr);
+  const td = mergeTides(mergeTides(tidesFromModel(fc.hours), official), parseLinz(linzText));
+  return { cache: fc, tides: td, days: buildDays(fc, rulesFor(p), nzNow(), td).slice(0, 14) };
+}
+
 function recompute() {
-  if (!cache) { days = []; tides = []; return; }
-  tides = mergeTides(tidesFromModel(cache.hours), parseLinz(linzText));
-  days = buildDays(cache, settings, nzNow(), tides).slice(0, 14);
+  for (const p of places()) placeData[p.name] = computePlace(p);
+  const c = placeData[cur().name];
+  cache = c?.cache || null; tides = c?.tides || []; days = c?.days || [];
 }
 
 function setStatus(msg, err = false) { statusEl.textContent = msg; statusEl.className = err ? 'err' : ''; }
@@ -44,20 +97,17 @@ function statusLine() {
 }
 
 async function refresh(force = false) {
-  const p = cur();
-  cache = caches[keyOf(p)] || null;
-  if (!force && cache && Date.now() - cache.fetchedAt < 30 * 60e3) { recompute(); render(); statusLine(); return; }
-  setStatus(`Loading ${p.name} forecast…`);
-  try {
-    const fresh = await fetchForecast(p.lat, p.lon);
-    if (keyOf(cur()) !== keyOf(p)) return; // user switched spot meanwhile
-    cache = caches[keyOf(p)] = fresh;
-    localStorage.setItem('pf.caches', JSON.stringify(caches));
-    recompute(); render(); statusLine();
-  } catch (e) {
-    recompute(); render();
-    setStatus(`Couldn't refresh (${e.message}).${cache ? ` Showing data from ${ago(cache.fetchedAt)}.` : ''}`, true);
-  }
+  const stale = (p) => { const c = caches[keyOf(p)]; return !c || force || Date.now() - c.fetchedAt >= 30 * 60e3; };
+  for (const k of Object.keys(caches)) if (!places().some((p) => keyOf(p) === k)) delete caches[k]; // drop forecasts for removed spots
+  const todo = places().filter(stale);
+  recompute(); render(); statusLine();
+  if (!todo.length) return;
+  setStatus(`Loading ${todo.length > 1 ? todo.length + ' spots' : todo[0].name}…`);
+  let failed = null;
+  await Promise.all(todo.map(async (p) => { try { caches[keyOf(p)] = await fetchForecast(p.lat, p.lon); } catch (e) { failed = e; } }));
+  localStorage.setItem('pf.caches', JSON.stringify(caches));
+  recompute(); render(); statusLine();
+  if (failed) setStatus(`Couldn't refresh everything (${failed.message}). Showing the latest data we have.`, true);
 }
 
 // ---------- formatting ----------
@@ -75,6 +125,74 @@ const maoriChip = (d) => {
   if (!r && !ok) return '';
   return `<span class="mp mp-${r || 'none'}" title="Māori fishing calendar: ${r || 'not loaded'}${ok ? '; best window matches Billy Ho\'s tide rule' : ''}">🌙${r ? MAORI_STARS[r] : ''}${ok ? '✓' : ''}</span> `;
 };
+
+// ---------- first screen: answer first ----------
+const nzDay = (date) => `${weekday(date)} ${+date.slice(8)}`;
+const protectedHtml = (p) => {
+  const near = protectedNear(p.lat, p.lon, 4);
+  if (!near.length) return '';
+  return `<div class="dsum warn"><div class="big"><b>⚠ Protected areas near ${esc(p.name)}</b></div>
+    ${near.map((n) => `<div class="sub">• <b>${esc(n.area.name)}</b> – ${n.inside ? 'this spot\'s position is INSIDE it' : n.km.toFixed(1) + ' km from this spot\'s position'}. ${KIND_TEXT[n.area.kind]}.</div>`).join('')}
+    <div class="sub dim">Boundaries come from OpenStreetMap and are only a guide – see them on the <a href="#map">map</a>, and check the official rules before fishing near one: <a href="${RULES_URL}" target="_blank" rel="noopener">Fisheries NZ recreational rules</a> (the free "NZ Fishing Rules" app has size and bag limits).</div></div>`;
+};
+const colourChips = (cs) => cs.map((c) => `<span class="chip">${c}</span>`).join('');
+
+function betHtml(b, title) {
+  if (!b) return '';
+  const d = b.day, t = b.target;
+  return `<div class="best">
+    <div class="big"><b>${title}</b><span class="badge ${d.rating}">${lab[d.rating]}${d.warn ? ' ⚠' : ''}</span></div>
+    <button class="bigline" data-pick="${esc(b.place.name)}|${d.date}">${nzDay(d.date)} · ${windowLabel(d.best)} · ${esc(b.place.name)} ›</button>
+    ${t.top ? `<div class="sub"><b>Try:</b> ${t.top.name} (${t.top.level}) – ${t.quick}</div><div class="lures">${colourChips(b.colours)}</div>` : '<div class="sub"><b>Try:</b> nothing reads Good or Fair for fish – a low-expectation day.</div>'}
+    ${b.take.length ? `<div class="sub"><b>Take:</b> ${b.take.map(esc).join(' + ')}</div>` : ''}
+    <div class="sub">${b.redAt ? `Conditions go red at ${String(b.redAt).padStart(2, '0')}:00 – be off before then.` : `Plan to be off by ${String(d.best.endH % 24).padStart(2, '0')}:00.`}${b.trip ? ` About ${b.trip.km} km from Pauanui: be back by ${b.trip.back}; ${b.trip.fuel}.` : ''}</div>
+    <ul class="why">${b.reasons.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>
+    ${b.near.length ? `<div class="sub warnline">⚠ ${esc(b.place.name)} is near ${esc(b.near[0].area.name)} – check the map before choosing where to fish.</div>` : ''}
+  </div>`;
+}
+
+function topCards() {
+  // Compare only spots in the same area as the selected one (Coromandel vs Auckland are 90+ km apart).
+  const entries = places().filter((p) => km(p, cur()) < 40).map((p) => ({ place: p, days: placeData[p.name]?.days || [], home: km(homePt(), p) })).filter((e) => e.days.length);
+  if (!entries.length) return '';
+  const { pick, alt } = bestBet(entries, settings, maori);
+  const best = pick ? betHtml(pick, 'Best bet this week') : '<div class="best"><div class="big"><b>Best bet this week</b><span class="badge NOGO">NO-GO</span></div><div class="sub">No GO or MAYBE window at any spot in the next 7 days. Check <b>Next week</b> below, or the day rows for the closest calls.</div></div>';
+  const altLine = alt ? `<button class="altline" data-pick="${esc(alt.place.name)}|${alt.day.date}">Next best: ${nzDay(alt.day.date)} · ${esc(alt.place.name)} · ${lab[alt.day.rating]} ${windowLabel(alt.day.best)} ›</button>` : '';
+  // spot-by-day grid
+  const g = gridModel(entries, 7);
+  const head = g[0].cells.map((c) => `<span>${weekday(c.date).slice(0, 2)}<br>${+c.date.slice(8)}</span>`).join('');
+  const rows = g.map((r) => `<div class="grow"><span class="gname">${esc(r.place.name)}</span>${r.cells.map((c) => `<button class="cell ${c.rating}${c.outlook ? ' est' : ''}" data-pick="${esc(r.place.name)}|${c.date}" title="${esc(r.place.name)} ${c.date}: ${lab[c.rating]}">${c.win || '·'}${c.warn ? '<sup>⚠</sup>' : ''}</button>`).join('')}</div>`).join('');
+  const grid = `<div class="dsum"><div class="big"><b>${km(cur(), homePt()) < 40 ? 'Coromandel spots' : 'Spots here'}, all week</b><span class="dim">tap a cell</span></div><div class="grow ghead"><span class="gname"></span>${head}</div>${rows}<div class="sub dim">Cell = best window start–end hour. Faded cells (≈) are wind and rain only. Green GO, amber MAYBE, red NO-GO.</div></div>`;
+  const species = [...SPECIES.map((s) => s.name), 'Other'].map((n) => `<option ${n === (localStorage.getItem('pf.lastSpecies') || 'Snapper') ? 'selected' : ''}>${n}</option>`).join('');
+  const log = `<div class="logbar"><span>Fished today?</span><select id="lg-species">${species}</select><button data-log="fish" class="save">🐟 Fish</button><button data-log="blank">Blank</button></div>`;
+  return `${best}${altLine}${grid}${log}${protectedHtml(cur())}`;
+}
+
+async function logTrip(result) {
+  const species = result === 'fish' ? $('#lg-species')?.value || '' : '';
+  localStorage.setItem('pf.lastSpecies', $('#lg-species')?.value || '');
+  const when = nzNow();
+  const rec = { t: when, result, species, lure: '', notes: '', conds: conditionsAt(cache, tides, when), place: cur().name };
+  setStatus('Logging your trip…');
+  const pos = await new Promise((res) => (navigator.geolocation ? navigator.geolocation.getCurrentPosition((p) => res(p.coords), () => res(null), { enableHighAccuracy: true, timeout: 8000 }) : res(null)));
+  let msg;
+  if (pos) {
+    const here = { lat: pos.latitude, lon: pos.longitude };
+    let s = spots.find((x) => km(x, here) < 0.4);
+    if (!s) {
+      s = { id: newId(), name: `New spot ${nzDay(when.slice(0, 10))}`, lat: +here.lat.toFixed(5), lon: +here.lon.toFixed(5), notes: 'Saved from a one-tap trip log – rename it in 📍', habitat: [], depth: null, catches: [], created: when };
+      spots.push(s);
+    }
+    s.catches.push(rec); saveSpots();
+    const pr = insideProtected(here.lat, here.lon);
+    msg = `Logged ${result === 'fish' ? 'fish' : 'a blank'} at ${s.name}.${pr ? ` ⚠ That position is inside ${pr.area.name} – check the rules.` : ''}`;
+  } else {
+    trips.push(rec); localStorage.setItem('pf.trips', JSON.stringify(trips));
+    msg = `Logged ${result === 'fish' ? 'fish' : 'a blank'} (no GPS fix, so no spot saved).`;
+  }
+  setStatus(msg, msg.includes('⚠'));
+  render();
+}
 
 // ---------- week view ----------
 function weekView() {
@@ -103,20 +221,23 @@ function weekView() {
   }).join('');
   const wk = days.length > 7 ? `<div class="seg"><button data-week="0" class="${weekIdx === 0 ? 'on' : ''}">This week</button><button data-week="1" class="${weekIdx === 1 ? 'on' : ''}">Next week</button></div>` : '';
   const estNote = weekIdx === 1 ? '<div class="hint dim">≈ Outlook only: this far out the forecast has wind, gusts and rain but no sea, swell or tide data (it runs out after about 9 days), so ratings use wind and rain only and sea height is unknown. Treat as a rough guide and re-check closer to the day.</div>' : '';
-  app.innerHTML = `${wk}${estNote}<div class="axis"><div class="strip" style="--n:${cells}">${axis}</div></div>${rows}
+  app.innerHTML = `${topCards()}${wk}${estNote}<div class="axis"><div class="strip" style="--n:${cells}">${axis}</div></div>${rows}
     <div class="legend"><i class="GO"></i>GO<i class="MAYBE"></i>Maybe<i class="NOGO"></i>No-go<i class="win"></i>best window · kt · m · mm, daylight ranges, swell at window</div>
-    <div class="legend">🌙★★★ = Māori fishing calendar day rating (Excellent ★★★, Good ★★, Poor ★) · ✓ = best window is on the tide Billy Ho favours (waxing moon → outgoing, waning → incoming) · 🤿 = great dive day. ${Object.keys(maori).some((k) => k >= shown[0].date) ? '' : `No ratings loaded – paste the page in ⚙︎ (<a href="${SOURCES.maori.url}" target="_blank" rel="noopener">open calendar ↗</a>).`}</div>`;
+    <div class="legend">🌙★★★ = Māori fishing calendar day rating (Excellent ★★★, Good ★★, Poor ★) · ✓ = best window is on the tide Billy Ho favours (waxing moon → outgoing, waning → incoming) · 🤿 = great dive day. ${Object.keys(maori).some((k) => k >= shown[0].date) ? '' : `Ratings not loaded (<a href="${SOURCES.maori.url}" target="_blank" rel="noopener">open calendar ↗</a>).`}</div>`;
 }
 
 // ---------- day view ----------
 const dayTides = (date) => tides.filter((e) => dateOf(e.t) === date);
+const det = (title, inner, open = false) => `<details class="dsum"${open ? ' open' : ''}><summary><b>${title}</b></summary>${inner}</details>`;
+const lvlClass = (l) => (l === 'Good' || l === 'Great' ? 'GO' : l === 'Fair' || l === 'OK' ? 'MAYBE' : 'NOGO');
 
 function dayView(date) {
   const i = days.findIndex((d) => d.date === date);
   if (i < 0) return weekView();
-  const d = days[i], L = settings, f = L.maybeFactor, s = d.stats;
+  const L = rulesFor(cur()), f = L.maybeFactor, d = days[i], s = d.stats;
   const tl = dayTides(date);
-  const src = tl.some((e) => e.src === 'LINZ') ? 'LINZ' : 'model (approx.)';
+  const corr = tideCorrection();
+  const src = tl.some((e) => e.src === 'LINZ') ? (linzText.trim() ? 'LINZ (pasted)' : (corr.hw === 0 && corr.lw === 0 ? `LINZ official, ${corr.name} (primary port)` : `LINZ official, ${corr.name} correction`)) : 'model (approx.)';
   const tideHtml = tl.length
     ? tl.map((e) => `<span><b>${e.type === 'H' ? 'High' : 'Low'}</b>${hhmm(e.t)} <span class="dim">${e.m.toFixed(1)}m</span></span>`).join('')
     : '<span class="dim">No tide data</span>';
@@ -125,21 +246,46 @@ function dayView(date) {
   const outlook = speciesOutlook(d, settings);
   const tips = todaysTips(d, outlook, settings);
   const gear = gearList(d, outlook);
+  const plan = gearPlan(d, outlook, settings.lures);
+  const tg = targetFor(d, settings);
   const refH = d.hours.find((h) => h.h === (d.best?.startH ?? 8));
   const sh = refH ? shelter(refH.wdir, refH.wind, spots) : null;
-  const shelterCard = sh ? `<div class="dsum"><div class="big"><b>Wind shelter</b><span class="dim">${compass(refH.wdir)} ${n0(refH.wind)} kt at ${String(refH.h).padStart(2, '0')}:00</span></div>
-      <div class="sub">${sh.light ? 'Light wind, so shelter matters little today. ' : ''}Wind is from the ${sh.fromDir}, so the <b>${sh.leeDir} side</b> of Shoe, Slipper and the Aldermen is the sheltered (lee) side; the ${sh.fromDir} side is exposed.</div>
-      ${sh.near.map((n) => `<div class="sub">• <b>${esc(n.spot)}</b> is on the ${n.where} of ${n.island}.</div>`).join('')}</div>` : '';
+  const swSh = refH && !cur().harbour && refH.sw >= 0.4 ? shelter(refH.swd, refH.sw, spots) : null;
+  const here = { lat: cur().lat, lon: cur().lon };
+  const nearIslands = ISLANDS.filter((x) => km(x, here) < 30).map((x) => x.name.replace(' Islands', '').replace(' Island', '')).join(', ').replace(/, ([^,]*)$/, ' and $1');
+  const fromHome = km(homePt(), here);
+  const trip = fromHome <= 40 ? tripCheck(d, fromHome, settings.skiRangeKm) : null; // Pauanui-based fuel check only makes sense near Pauanui
+  const redAt = turnsRedAt(d);
+  const at = (h) => `${String(h.h).padStart(2, '0')}:00`;
+
+  // Heads-up: safety, shelter, swell, protected areas – all in one place
+  const heads = [];
+  for (const x of d.safety) heads.push(x.text);
+  if (d.cold) heads.push(d.cold);
+  if (sh && !sh.light) heads.push(`Wind ${sh.fromDir} ${n0(refH.wind)} kt at ${at(refH)}: the <b>${sh.leeDir} side</b> of ${nearIslands || 'any island or headland'} is sheltered, the ${sh.fromDir} side exposed.`);
+  else if (sh) heads.push('Light wind, so shelter matters little today.');
+  if (swSh) heads.push(`Swell ${n1(refH.sw)} m from the ${swSh.fromDir} (${n0(refH.swp)} s): spots on the ${swSh.leeDir} side of an island are sheltered from it.`);
+  for (const x of (sh?.near || [])) heads.push(`<b>${esc(x.spot)}</b> is on the ${x.where} of ${x.island} (wind).`);
+  for (const x of (swSh?.near || [])) heads.push(`<b>${esc(x.spot)}</b> is on the ${x.where} of ${x.island} (swell).`);
+  const prot = protectedNear(cur().lat, cur().lon, 4);
+  for (const n of prot) heads.push(`⚠ ${esc(n.area.name)} is ${n.inside ? 'where this spot is' : n.km.toFixed(1) + ' km away'}: ${KIND_TEXT[n.area.kind]}. See the <a href="#map">map</a>.`);
+  if (d.outlook) heads.push('≈ Outlook only: no sea, swell or tide data this far out. Rating uses wind and rain; check again closer to the day.');
+
+  // Spots you've tagged, ranked (never inside a protected area)
+  const blocked = (sp) => insideProtected(sp.lat, sp.lon);
   let yourSpotsCard = '';
   if (spots.length) {
     const cond = d.best ? conditionsAt(cache, tides, `${d.date}T${String(d.best.startH).padStart(2, '0')}:30`) : null;
     const hits = spotsForToday(spots, cond);
-    const ranked = trySpots(spots, outlook, sh, hits, { lat: settings.lat, lon: settings.lon });
-    yourSpotsCard = `<div class="dsum"><div class="big"><b>Try these spots</b><a href="#spots" class="dim">manage</a></div>
+    const ranked = trySpots(spots, outlook, sh, hits, homePt(), blocked);
+    const closed = spots.filter(blocked);
+    yourSpotsCard = `<div class="dsum"><div class="big"><b>Your spots for this window</b><a href="#spots" class="dim">manage</a></div>
       ${cond ? `<div class="sub dim">Conditions at ${String(d.best.startH).padStart(2, '0')}:30 – tide ${cond.stage || '?'}, wind ${compass(cond.wdir)} ${n0(cond.wind)} kt, ${cond.light}</div>` : ''}
-      ${ranked.length ? ranked.map((r) => `<div class="sub">• <b>${esc(r.spot.name)}</b>${r.best ? ` – ${r.best.species} (${r.best.level}): suits ${r.best.fit.join(', ')}` : ''}${r.notes.length ? '; ' + r.notes.join('; ') : ''}${r.km != null ? ` · ${Math.round(r.km)} km from Pauanui` : ''} · <a href="${satelliteUrl(r.spot.lat, r.spot.lon)}" target="_blank" rel="noopener">satellite</a> · <a href="${wetmapsUrl(r.spot.lat, r.spot.lon)}" target="_blank" rel="noopener">chart</a>${r.best ? `<div class="src">${srcLinks(r.best.src.slice(0, 4))}</div>` : ''}</div>`).join('')
-        : '<div class="sub">Nothing to suggest yet. Tag your spots with habitat and depth (📍 → Habitat &amp; depth) and log trips, and this ranks them against today\'s species outlook, shelter and tide.</div>'}</div>`;
+      ${ranked.length ? ranked.map((r) => `<div class="sub">• <b>${esc(r.spot.name)}</b>${r.best ? ` – ${r.best.species} (${r.best.level}): suits ${r.best.fit.join(', ')}` : ''}${r.notes.length ? '; ' + r.notes.join('; ') : ''}${r.km != null && r.km < 40 ? ` · ${Math.round(r.km)} km from Pauanui` : ''} · <a href="${satelliteUrl(r.spot.lat, r.spot.lon)}" target="_blank" rel="noopener">satellite</a> · <a href="${wetmapsUrl(r.spot.lat, r.spot.lon)}" target="_blank" rel="noopener">chart</a></div>`).join('')
+        : '<div class="sub">Nothing to suggest yet. Tag your spots with habitat and depth (📍) and log trips, and this ranks them.</div>'}
+      ${closed.length ? `<div class="sub warnline">⚠ Not suggested – inside a protected area: ${closed.map((c) => esc(c.name)).join(', ')}.</div>` : ''}</div>`;
   }
+
   const favs = (settings.favs || '').trim();
   const sst = d.hours.find((h) => h.h === 12)?.sst;
   const winHrs = d.best ? d.hours.filter((h) => h.h >= d.best.startH && h.h < d.best.endH) : [];
@@ -159,6 +305,8 @@ function dayView(date) {
       <td>${h.sl == null ? '–' : (h.sl >= 0 ? '+' : '') + h.sl.toFixed(1)}${h.turn ? `<span class="turn" title="tide turn ${hhmm(h.turn.t)}"> ${h.turn.type === 'H' ? '▲' : '▼'}</span>` : ''}</td></tr>`;
   }).join('');
 
+  const speciesDetail = outlook.filter((x) => x.level !== 'Slow').concat(outlook.filter((x) => x.level === 'Slow')).map((x) => `<div class="sp"><div class="big"><span>${x.name}</span><span class="badge ${lvlClass(x.level)}">${x.level}</span></div><div class="sub">${x.tip}</div><div class="sub dim">Season: ${x.season}</div><div class="sub dim">${x.reasons.join(' · ') || 'nothing in its favour today'}</div><div class="src">${srcLinks(x.src)}</div></div>`).join('');
+
   const long = new Date(date + 'T12:00:00Z').toLocaleDateString('en-NZ', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
   h1.textContent = long;
   app.innerHTML = `
@@ -166,54 +314,51 @@ function dayView(date) {
       <div class="big"><span class="badge ${d.rating}" style="font-size:14px">${d.best ? `${lab[d.rating]} window ${windowLabel(d.best)}` : 'NO-GO all day'}</span>
         <span>↑${hhmm(d.sunrise)}  ↓${hhmm(d.sunset)}</span></div>
       <div class="tides">${tideHtml}</div>
-      <div class="sub">Tides: ${src}${src !== 'LINZ' ? ' – paste LINZ in ⚙︎ for exact times' : ''}</div>
-      <div class="sub">${moonTxt}</div>
-      <div class="sub">🌙 Māori fishing calendar: <b>${maori[d.date] || 'not loaded (paste it in ⚙︎)'}</b> · Billy Ho: ${d.billy.waxing ? 'waxing moon → outgoing tide' : 'waning moon → incoming tide'}${d.billy.stage ? `; best window is on a ${d.billy.stage} tide ${d.billy.match ? '✓' : '(no match)'}` : ''} · <a href="${SOURCES.maori.url}" target="_blank" rel="noopener">his daily rating ↗</a></div>
-      ${turnTxt ? `<div class="sub">${turnTxt}</div>` : ''}
-      <div class="sub">Day: wind ${range(s.windMin, s.windMax)} g${n0(s.gustMax)} kt · sea ${range(s.seaMin, s.seaMax, n1)} m · rain ${s.rainTotal < 0.05 ? '0' : n1(s.rainTotal)} mm</div>
+      <div class="sub">Wind ${range(s.windMin, s.windMax)} g${n0(s.gustMax)} kt · sea ${range(s.seaMin, s.seaMax, n1)} m · rain ${s.rainTotal < 0.05 ? '0' : n1(s.rainTotal)} mm${turnTxt ? ' · ' + turnTxt.toLowerCase() : ''}</div>
+      <div class="sub">🌙 Māori fishing calendar: <b>${maori[d.date] || 'n/a'}</b> · Billy Ho: ${d.billy.waxing ? 'waxing → outgoing tide' : 'waning → incoming tide'}${d.billy.stage ? `; window is on a ${d.billy.stage} tide ${d.billy.match ? '✓' : '(no match)'}` : ''}</div>
+      <div class="sub dim">Tides: ${src}${src === 'model (approx.)' ? ' – LINZ tables not loaded yet' : ''}${cur().note ? ' · ' + esc(cur().note) : ''}</div>
     </div>
-    ${d.safety.length || d.cold ? `<div class="dsum warn"><div class="big"><b>⚠ Safety notes</b></div>${d.safety.map((x) => `<div class="sub">${x.text}</div>`).join('')}${d.cold ? `<div class="sub">${d.cold}</div>` : ''}</div>` : ''}
-    ${shelterCard}
+    <div class="dsum">
+      <div class="big"><b>What to try</b></div>
+      ${tg.top ? `<div class="sub"><b>${tg.top.name}</b> (${tg.top.level}) – ${tg.quick}</div>${tg.others.map((o) => `<div class="sub dim">Also ${o.level}: ${o.name}</div>`).join('')}` : '<div class="sub">No species reads Good or Fair for fish today – a low-expectation day.</div>'}
+      <div class="lures">${colourChips(lure.main.slice(0, 3))}</div>
+      <div class="sub dim">Colours for ${d.runoff.label.toLowerCase()} water${favs ? ` · your favourites: ${esc(favs)}` : ''}</div>
+      ${d.best ? `<div class="sub">${redAt ? `Conditions go red at ${String(redAt).padStart(2, '0')}:00 – be off before then.` : `Plan to be off by ${String(d.best.endH % 24).padStart(2, '0')}:00.`}</div>` : ''}
+      ${trip ? `<div class="sub">${trip.km} km from Pauanui: be back on the beach by <b>${trip.back}</b> (an hour before sunset); ${trip.fuel}.</div>` : ''}
+    </div>
+    <div class="dsum">
+      <div class="big"><b>What to take</b><span class="dim">your rods and reels</span></div>
+      ${plan.take.length ? plan.take.map((t) => `<div class="sub"><b>${t.combo.name}</b> <span class="dim">· ${t.combo.role} · ${esc(t.combo.rod)} · ${t.combo.rodSpec} · ${t.combo.braid} braid</span>${t.modes.map((m) => `<div class="sub">• ${m.title}: ${m.lure}${m.g ? ' ' + (m.g[0] === m.g[1] ? m.g[0] : m.g[0] + '–' + m.g[1]) + ' g' : ''} – ${m.fit.text}${m.alts.length ? `<div class="sub dim">Alternative: ${m.alts.map((x) => `${x.name} (${x.text})`).join('; ')}</div>` : ''}</div>`).join('')}</div>`).join('') : '<div class="sub">Nothing reads Fair or Good for fish, so just take your lightest outfit for a low-expectation session.</div>'}
+      ${plan.lureCheck.length ? `<div class="sub"><b>Your lures</b></div>${plan.lureCheck.map((l) => `<div class="sub ${l.level === 'warn' ? 'warnline' : ''}">${esc(l.text)}</div>`).join('')}` : ''}
+      ${plan.notes.map((n) => `<div class="sub dim">${esc(n)}</div>`).join('')}
+    </div>
+    ${heads.length ? `<div class="dsum warn"><div class="big"><b>Heads-up</b></div>${heads.map((x) => `<div class="sub">${x}</div>`).join('')}</div>` : ''}
     ${yourSpotsCard}
     <div class="dsum">
-      <div class="big"><b>Water &amp; lures</b><span class="badge clar-${d.runoff.level}">${d.runoff.label}</span></div>
+      <div class="big"><b>Tips for today</b><span class="dim">angler advice – moon and tide-turn effects are beliefs, not measurements</span></div>
+      ${tips.slice(0, 3).map((t) => `<div class="sub tip">${t.text}<div class="src">${srcLinks(t.src)}</div></div>`).join('')}
+    </div>
+    ${det('More: fish activity by species', `${speciesDetail}<div class="sub dim">This is advice from fishing.net.nz articles, not a prediction: the seasons and rules come from them, the point weights are mine and nothing here has been checked against catches yet. Log your trips (🐟 on the first page) to test it.</div>`)}
+    ${tips.length > 3 ? det('More: other tips', tips.slice(3).map((t) => `<div class="sub tip">${t.text}<div class="src">${srcLinks(t.src)}</div></div>`).join('')) : ''}
+    ${det('More: water, lures and pressure', `<div class="big"><span class="badge clar-${d.runoff.level}">${d.runoff.label}</span></div>
       <div class="sub">Rain: ${d.runoff.mm24} mm in the 24 h before dawn · ${d.runoff.mm72} mm over 72 h${sst != null ? ` · sea ${sst.toFixed(1)}°C` : ''}</div>
       ${d.runoff.clearing ? '<div class="sub">Water is clearing after rain – food gets flushed out, so the shallows can fire as it clears.</div>' : ''}
-      <div class="lures">${lure.main.map((c) => `<span class="chip">${c}</span>`).join('')}</div>
-      <div class="sub">Also try: ${lure.alt.join(', ')}${favs ? ` · <b>Your favourites:</b> ${favs.replace(/[<&]/g, '')}` : ''}</div>
+      <div class="lures">${colourChips(lure.main)}</div><div class="sub">Also try: ${lure.alt.join(', ')}</div>
       ${d.pressure ? `<div class="sub">Pressure ${d.pressure.hpa} hPa, ${d.pressure.trend} (${d.pressure.delta > 0 ? '+' : ''}${d.pressure.delta} over 6 h) – ${d.pressure.text}.</div>` : ''}
-      <div class="sub">Because: ${lure.why}. Rule of thumb, not science.</div>
-    </div>
-    ${d.outlook ? '<div class="dsum warn"><div class="sub">≈ Outlook only: no sea, swell or tide data this far out. Rating uses wind and rain; sea height is unknown, so check again closer to the day.</div></div>' : ''}
-    ${d.outlook ? '' : `<div class="dsum">
-      <div class="big"><b>🤿 Dive outlook</b><span class="badge ${d.dive.level === 'Great' ? 'GO' : d.dive.level === 'OK' ? 'MAYBE' : 'NOGO'}">${d.dive.level}${d.dive.window ? ' ' + windowLabel(d.dive.window) : ''}</span></div>
-      <div class="sub">${d.dive.why.join(' · ')}</div>
-      <div class="sub dim">Conditions only – midday sun, small swell, little recent rain, ideally slack water. Dive to your training.</div>
-    </div>`}
-    <div class="dsum">
-      <div class="big"><b>Tips for today</b><span class="dim">from fishing.net.nz</span></div>
-      ${tips.map((t) => `<div class="sub tip">${t.text}<div class="src">${srcLinks(t.src)}</div></div>`).join('')}
-    </div>
-    <div class="dsum">
-      <div class="big"><b>Species outlook</b><span class="dim">fish activity, not weather</span></div>
-      ${outlook.map((s) => `<div class="sp"><div class="big"><span>${s.name}</span><span class="badge ${s.level === 'Good' ? 'GO' : s.level === 'Fair' ? 'MAYBE' : 'NOGO'}">${s.level}</span></div><div class="sub">${s.tip}</div><div class="sub dim">Season: ${s.season}</div><div class="sub dim">${s.reasons.join(' · ')}</div><div class="src">${srcLinks(s.src)}</div></div>`).join('')}
-      <div class="sub dim">Seasons and tide/light/moon/clarity rules are paraphrased from the linked fishing.net.nz articles; point weights are ours. A nudge, not a fisheries model.</div>
-    </div>
-    <details class="dsum"><summary><b>What to take today</b> <span class="dim">(tap)</span></summary>
-      ${gear.map((g) => `<div class="sub">• ${g.text}<div class="src">${srcLinks(g.src)}</div></div>`).join('')}
-    </details>
-    <details class="dsum"><summary><b>Getting live bait</b> <span class="dim">(tap)</span></summary>
-      <div class="sub">Jack mackerel, koheru, piper, blue mackerel, small kahawai and mullet are the usual baits; around 100 mm suits kingfish, john dory and big snapper.</div>
+      <div class="sub dim">Because: ${lure.why}. Rule of thumb.</div>`)}
+    ${d.outlook ? '' : det('More: dive outlook', `<div class="big"><span class="badge ${lvlClass(d.dive.level)}">${d.dive.level}${d.dive.window ? ' ' + windowLabel(d.dive.window) : ''}</span></div><div class="sub">${d.dive.why.join(' · ')}</div><div class="sub dim">Conditions only – midday sun, small swell, little recent rain, ideally slack water. Dive to your training.</div>`)}
+    ${det('More: bait and terminal gear', gear.map((g) => `<div class="sub">• ${g.text}<div class="src">${srcLinks(g.src)}</div></div>`).join(''))}
+    ${det('More: my rods and reels', COMBOS.map((c) => `<div class="sub"><b>${c.name}</b> (${c.role})<div class="sub dim">${esc(c.reel)}<br>${esc(c.rod)} · ${c.rodSpec}<br>Braid: ${c.braid}${c.spool ? ' · spool label ' + c.spool : ''}${c.note ? '<br>' + esc(c.note) : ''}</div></div>`).join(''))}
+    ${det('More: getting live bait', `<div class="sub">Jack mackerel, koheru, piper, blue mackerel, small kahawai and mullet are the usual baits; around 100 mm suits kingfish, john dory and big snapper.</div>
       <div class="sub">Sabiki: always a sinker on the end, bring fish in as soon as hooked, twitch gently and vary depth; drop to a smaller size if there are no bites. Luminous beads need a light to recharge.</div>
       <div class="sub">Berley (bread/rice with crushed pilchard, in a mesh bag) draws bait; with berley use tiny baited hooks held still. At night a light on the water pulls in bait and its food.</div>
       <div class="sub">Keeping bait alive: a big bucket or inflatable paddling pool with a small battery aerator; handle gently, don't overcrowd, keep a dip net. Piper last for hours on a small circle hook through the bill. Big kahawai suit a bridle rig with a circle hook.</div>
-      <div class="sub">Pilchards need much finer gear (about size 16 hooks, 2 kg leader). Hook a lively bait for kingfish in the upper shoulder, and keep it lively.</div>
-    </details>
+      <div class="sub">Pilchards need much finer gear (about size 16 hooks, 2 kg leader). Hook a lively bait for kingfish in the upper shoulder, and keep it lively.</div>`)}
+    ${det('More: moon and bite periods', `<div class="sub">${moonTxt}</div><div class="sub">Bite periods (moon-based folklore, not part of the rating): ${solTxt || 'none'}. ★ major, ☆ minor, ▲▼ = hour near a tide turn.</div><div class="sub dim">Compare with fishing.net.nz's ${srcLinks(['biteTimes', 'maori'])}.</div>`)}
     <div class="nav"><button id="prev" ${i === 0 ? 'disabled' : ''}>‹ ${i ? weekday(days[i - 1].date) : ''}</button><button id="next" ${i === days.length - 1 ? 'disabled' : ''}>${i < days.length - 1 ? weekday(days[i + 1].date) : ''} ›</button></div>
     <table><thead><tr><th>Time</th><th>Wind/gust kt</th><th>Sea m</th><th>Swell m·s·dir</th><th>Rain</th><th>Tide</th></tr></thead><tbody>${body}</tbody></table>
     <label class="toggle"><input type="checkbox" id="night" style="width:auto" ${showNight ? 'checked' : ''}> Show night hours</label>
-    <p class="hint dim"><b>Bite periods</b> (moon-based, folklore – not part of the rating): ${solTxt || 'none'}. ★ major, ☆ minor. ▲▼ = hour near a high/low tide turn. Compare with fishing.net.nz's ${srcLinks(['biteTimes', 'maori'])}.</p>
-    <p class="hint dim">Amber = over your limit, red = beyond the MAYBE margin. Tap a row's time for why (long-press on desktop).</p>`;
+    <p class="hint dim">Amber = over your limit, red = beyond the MAYBE margin. Tap a row's time for why. Size and bag limits: <a href="${RULES_URL}" target="_blank" rel="noopener">Fisheries NZ rules</a> / the "NZ Fishing Rules" app.</p>`;
   $('#prev')?.addEventListener('click', () => go(days[i - 1].date));
   $('#next')?.addEventListener('click', () => go(days[i + 1].date));
   $('#night').addEventListener('change', (e) => { showNight = e.target.checked; render(); });
@@ -233,7 +378,7 @@ function loadLeaflet() {
 async function mapView() {
   const token = ++mapToken;
   if (leafletMap) { leafletMap.remove(); leafletMap = null; }
-  app.innerHTML = '<div class="seg"><button id="m-sat" class="on">Satellite</button><button id="m-chart">LINZ chart (Wet Maps)</button></div><div id="map"></div><iframe id="chartframe" title="Wet Maps – LINZ charts" hidden></iframe><p class="hint dim">Needs a data connection – tiles won\'t load offshore, so use this for planning. Satellite shows reefs, kelp and wash as darker patches. Not for navigation: use your Garmin charts on the water.</p><p class="hint"><a href="https://wetmaps.co.nz/#10/-37.0100/175.9500" target="_blank" rel="noopener">Open LINZ charts in Wet Maps ↗</a> – a free NZ chart map by Gabe Young (also has Navionics, satellite, measuring). The chart tab above embeds it; if it stays blank on your phone, use this link instead. Tap Chart (Wet Maps) on any spot to open it centred there in a new tab.</p>';
+  app.innerHTML = '<div class="seg"><button id="m-sat" class="on">Satellite</button><button id="m-chart">LINZ chart (Wet Maps)</button></div><div id="map"></div><iframe id="chartframe" title="Wet Maps – LINZ charts" hidden></iframe><p class="hint dim">Needs a data connection – tiles won\'t load offshore, so use this for planning. Satellite shows reefs, kelp and wash as darker patches. <b style="color:#e5484d">Red areas are protected (no fishing)</b> – a guide from OpenStreetMap, confirm with DOC. Not for navigation: use your Garmin charts on the water.</p><p class="hint"><a href="https://wetmaps.co.nz/#10/-37.0100/175.9500" target="_blank" rel="noopener">Open LINZ charts in Wet Maps ↗</a> – a free NZ chart map by Gabe Young (also has Navionics, satellite, measuring). The chart tab above embeds it; if it stays blank on your phone, use this link instead. Tap Chart (Wet Maps) on any spot to open it centred there in a new tab.</p>';
   const showChart = (on) => {
     const f = $('#chartframe');
     if (on && !f.src) f.src = wetmapsUrl(-37.0, 175.97, 11);
@@ -266,13 +411,15 @@ async function mapView() {
     const cond = today.best ? conditionsAt(cache, tides, `${today.date}T${String(today.best.startH).padStart(2, '0')}:30`) : null;
     ranked = trySpots(spots, outlook, sh, spotsForToday(spots, cond), { lat: settings.lat, lon: settings.lon }).map((r) => r.spot.id);
   }
-  const pts = [...settings.places, ...ISLANDS].map((p) => [p.lat, p.lon]);
+  const here = cur();
+  const pts = [...settings.places, ...ISLANDS].filter((p) => km(p, here) < 40).map((p) => [p.lat, p.lon]);
   for (const s of spots) {
     const top = ranked.includes(s.id);
     pts.push([s.lat, s.lon]);
     L.circleMarker([s.lat, s.lon], { radius: top ? 9 : 6, color: '#fff', weight: 2, fillColor: top ? '#2fbf71' : '#8fa8bd', fillOpacity: 0.95 })
       .bindPopup(`<b>${esc(s.name)}</b><br>${(s.habitat || []).join(', ') || 'no habitat tags'}${s.depth ? ' · ' + s.depth + ' m' : ''}${top ? '<br>★ suggested today' : ''}<br><a href="${satelliteUrl(s.lat, s.lon)}" target="_blank" rel="noopener">Google satellite</a> · <a href="${wetmapsUrl(s.lat, s.lon)}" target="_blank" rel="noopener">Chart (Wet Maps)</a>`).addTo(leafletMap);
   }
+  for (const ar of getAreas()) L.polygon(ar.rings, { color: '#e5484d', weight: 1.5, fillColor: '#e5484d', fillOpacity: 0.22 }).bindTooltip(`${ar.name} – ${KIND_TEXT[ar.kind]}`, { sticky: true }).addTo(leafletMap);
   leafletMap.fitBounds(pts, { padding: [30, 30], maxZoom: 13 });
 }
 
@@ -284,6 +431,7 @@ function spotsView() {
   const cards = spots.map((s) => `
     <div class="dsum" data-id="${s.id}">
       <div class="big"><b>${esc(s.name)}</b><span class="dim">${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</span></div>
+      ${(() => { const pr = protectedNear(s.lat, s.lon, 0.5)[0]; return pr ? `<div class="sub warnline">⚠ ${pr.inside ? 'Inside' : 'Within ' + Math.round(pr.km * 1000) + ' m of'} ${esc(pr.area.name)} – ${KIND_TEXT[pr.area.kind]}. Check before fishing here.</div>` : ''; })()}
       ${s.notes ? `<div class="sub">${esc(s.notes)}</div>` : ''}
       <div class="sub dim">${(s.habitat || []).length || s.depth ? `Habitat: ${(s.habitat || []).join(', ') || '–'}${s.depth ? ' · ' + s.depth + ' m' : ''}` : 'No habitat tags yet – add them below so it can be matched to species.'}</div>
       <div class="sub"><a href="${satelliteUrl(s.lat, s.lon)}" target="_blank" rel="noopener">Satellite</a> · <a href="${wetmapsUrl(s.lat, s.lon)}" target="_blank" rel="noopener">Chart (Wet Maps)</a> · <a href="#" data-act="del">Delete spot</a></div>
@@ -302,7 +450,11 @@ function spotsView() {
         <button data-act="catch" class="save">Save trip</button>
       </details>
     </div>`).join('');
+  const st = logStats(spots, trips);
+  const statRows = Object.entries(st.groups).map(([g, obj]) => (Object.keys(obj).length ? `<div class="sub"><b>${g}:</b> ${Object.entries(obj).map(([k, v]) => `${k} ${v.fish}/${v.n}`).join(' · ')}</div>` : '')).join('');
+  const statsCard = `<div class="dsum"><div class="big"><b>What your log says</b><span class="dim">${st.all} trips · ${st.fishTrips} with fish</span></div>${st.all ? statRows + `<div class="sub dim">${st.all < 10 ? 'Fewer than 10 trips – too few to trust yet. ' : ''}Numbers are trips with fish / all trips. Blanks count as much as fish.</div>` : '<div class="sub">No trips logged yet. Tap 🐟 Fish or Blank on the first page after each trip – blanks matter as much as fish.</div>'}</div>`;
   app.innerHTML = `
+    ${statsCard}
     <div class="dsum">
       <div class="big"><b>Add a spot</b></div>
       <label>Name <input id="sp-name" placeholder="e.g. Slipper north reef"></label>
@@ -334,7 +486,8 @@ app.addEventListener('click', (e) => {
     const pos = parseCoords($('#sp-pos').value), name = $('#sp-name').value.trim();
     if (!pos) return spMsg("Couldn't read that position. Try -37.0206, 175.8909 or 37°01.234'S 175°53.456'E.");
     if (!name) return spMsg('Give the spot a name.');
-    addSpot({ ...pos, name, habitat: [...document.querySelectorAll('#sp-hab .hab:checked')].map((x) => x.value), depth: parseFloat($('#sp-depth').value) || null }); saveSpots(); spotsView(); spMsg('Saved.');
+    const prHit = insideProtected(pos.lat, pos.lon);
+    addSpot({ ...pos, name, habitat: [...document.querySelectorAll('#sp-hab .hab:checked')].map((x) => x.value), depth: parseFloat($('#sp-depth').value) || null }); saveSpots(); spotsView(); spMsg(prHit ? `Saved – but ⚠ this position is inside ${prHit.area.name}: ${KIND_TEXT[prHit.area.kind]}.` : 'Saved.');
   } else if (e.target.id === 'sp-export') {
     const url = URL.createObjectURL(new Blob([JSON.stringify(spots, null, 1)], { type: 'application/json' }));
     Object.assign(document.createElement('a'), { href: url, download: 'pauanui-spots.json' }).click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -375,7 +528,7 @@ function renderPlaces() {
 $('#places').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   placeIdx = +b.dataset.i; localStorage.setItem('pf.place', placeIdx);
-  cache = caches[keyOf(cur())] || null; recompute(); render(); refresh(false);
+  recompute(); render(); statusLine(); refresh(false);
 });
 function render() {
   renderPlaces();
@@ -390,6 +543,13 @@ addEventListener('hashchange', render);
 back.addEventListener('click', () => { history.length > 1 && route() ? history.back() : go(null); });
 app.addEventListener('click', (e) => {
   const w = e.target.closest('[data-week]'); if (w) { weekIdx = +w.dataset.week; render(); return; }
+  const pk = e.target.closest('[data-pick]');
+  if (pk) {
+    const [n, date] = pk.dataset.pick.split('|'), i = places().findIndex((p) => p.name === n);
+    if (i >= 0) { placeIdx = i; localStorage.setItem('pf.place', i); recompute(); statusLine(); }
+    go(date); return;
+  }
+  const lg = e.target.closest('[data-log]'); if (lg) { logTrip(lg.dataset.log); return; }
   const b = e.target.closest('.day'); if (b) go(b.dataset.date);
 });
 $('#refresh').addEventListener('click', () => refresh(true));
@@ -405,12 +565,11 @@ function linzHint() {
   return `Recognised ${ev.length} tides, ${ev[0].t.slice(0, 10)} → ${ev.at(-1).t.slice(0, 10)}.`;
 }
 $('#gear').addEventListener('click', () => {
-  for (const k of ['windMax', 'gustMax', 'seaMax', 'rainHeavy', 'maybeFactor']) form[k].value = settings[k];
+  for (const k of ['windMax', 'gustMax', 'seaMax', 'rainHeavy', 'maybeFactor', 'skiRangeKm']) form[k].value = settings[k];
   form.places.value = places().map((p) => `${p.name}, ${p.lat}, ${p.lon}`).join('\n');
   form.linz.value = linzText;
   form.favs.value = settings.favs || '';
-  form.maori.value = '';
-  $('#maorihint').textContent = Object.keys(maori).length ? `${Object.keys(maori).length} days loaded (${Object.keys(maori).sort()[0]} → ${Object.keys(maori).sort().at(-1)}). Paste a new month to add it.` : 'Nothing loaded yet.';
+  form.lures.value = (settings.lures || []).map((l) => `${l.name}, ${l.g ?? ''}`).join('\n');
   $('#linzhint').textContent = linzHint();
   $('#gridhint').textContent = cache ? `${cur().name}: Open-Meteo grid cells used: weather ${cache.grid.wx.map((v) => v.toFixed(2))}, marine ${cache.grid.marine.map((v) => v.toFixed(2))}.` : '';
   dlg.showModal();
@@ -419,20 +578,22 @@ form.linz.addEventListener('input', () => { $('#linzhint').textContent = linzHin
 form.addEventListener('submit', (e) => {
   if (e.submitter?.value !== 'save') return;
   const next = { ...settings };
-  for (const k of ['windMax', 'gustMax', 'seaMax', 'rainHeavy', 'maybeFactor']) {
+  for (const k of ['windMax', 'gustMax', 'seaMax', 'rainHeavy', 'maybeFactor', 'skiRangeKm']) {
     const v = parseFloat(form[k].value);
     if (Number.isFinite(v)) next[k] = v;
   }
   const parsed = form.places.value.split('\n').map((l) => l.split(',').map((x) => x.trim())).filter((p) => p.length >= 3 && p[0] && Number.isFinite(+p[1]) && Number.isFinite(+p[2]))
     .map((p) => ({ name: p[0], lat: +p[1], lon: +p[2] }));
-  if (parsed.length) next.places = parsed;
+  const sameAsDefault = (ps) => JSON.stringify(ps.map((p) => [p.name, p.lat, p.lon])) === JSON.stringify(DEFAULTS.places.map((p) => [p.name, p.lat, p.lon]));
+  if (parsed.length) next.places = sameAsDefault(parsed) ? DEFAULTS.places : parsed.map((p) => ({ ...(DEFAULTS.places.find((d) => d.name === p.name) || {}), ...p }));
   next.favs = form.favs.value;
-  const cal = parseMaoriCalendar(form.maori.value);
-  if (Object.keys(cal).length) { maori = { ...maori, ...cal }; localStorage.setItem('pf.maori', JSON.stringify(maori)); }
+  const luresParsed = parseLures(form.lures.value);
+  next.lures = luresParsed.length ? luresParsed : DEFAULTS.lures;
   settings = next;
   placeIdx = Math.min(placeIdx, settings.places.length - 1);
   linzText = form.linz.value;
-  localStorage.setItem('pf.settings', JSON.stringify(settings));
+  // Store only what differs from the defaults, so later default improvements still reach this phone.
+  localStorage.setItem('pf.settings', JSON.stringify({ v: 2, ...Object.fromEntries(Object.entries(settings).filter(([k, v]) => k !== 'v' && JSON.stringify(v) !== JSON.stringify(DEFAULTS[k]))) }));
   localStorage.setItem('pf.linz', linzText);
   refresh(false);
 });
@@ -446,4 +607,7 @@ $('#reset').addEventListener('click', () => {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(false); });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 recompute(); render(); statusLine();
-refresh(false);
+refresh(false).then(ensureOfficial);
+
+loadMaori();
+loadProtected();

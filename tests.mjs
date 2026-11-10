@@ -1,7 +1,11 @@
 // Run in Node (`node tests.mjs`) or import in a browser console. No dependencies.
 import { SOURCES, SPECIES, TIPS, GEAR } from './knowledge.js';
-import { parseCoords, parseGpx, tideStage, similarity, spotsForToday, shelter, trySpots, wetmapsUrl } from './spots.js';
-import { billyHo, parseMaoriCalendar } from './core.js';
+import { parseCoords, parseGpx, tideStage, similarity, spotsForToday, shelter, trySpots, wetmapsUrl, logStats } from './spots.js';
+import { setAreas, protectedNear, insideProtected } from './protected.js';
+import { gearPlan, fitOf, rangeFit, parseLures } from './gear.js';
+import { COMBOS, MY_LURES } from './knowledge.js';
+import { tripCheck, shortWindow, turnsRedAt } from './plan.js';
+import { billyHo, parseMaoriCalendar, parseLinzCsv, applyTideOffsets } from './core.js';
 import { rateHour, buildDays, parseLinz, tidesFromModel, mergeTides, moonInfo, solunar, runoffFor, lureAdvice, speciesOutlook, diveOutlook, todaysTips, gearList, DEFAULTS } from './core.js';
 
 const fails = [];
@@ -122,7 +126,8 @@ eq(rateHour({ ...ok, vis: 800 }).r, 'NOGO', 'fog = NOGO');
   eq(diveOutlook(mk('muddy', 0.3, 0.3)).level, 'Poor', 'muddy = Poor');
   eq(diveOutlook(mk('clear', 1.2, 1.0)).level, 'Poor', 'big sea = Poor');
 }
-eq(DEFAULTS.places.length, 3, 'three default spots');
+eq(DEFAULTS.places.length, 4, 'four default spots');
+eq(DEFAULTS.places.find((p) => p.harbour).tide.port, 'auckland', 'harbour uses Auckland tide table');
 
 // Knowledge base integrity: every cited source exists; tips/gear produce output.
 {
@@ -180,6 +185,55 @@ eq(parseMaoriCalendar('Poor fishing on Sunday 1 November 2026\nExcellent fishing
   const hrs = Array.from({ length: 24 }, (_, h) => ({ t: `${dt}T${String(h).padStart(2, '0')}:00`, date: dt, h, wind: 5, gust: 8, rain: 0, wave: null, p: 1015 }));
   const w = buildDays({ hours: hrs, lat: -37.02, lon: 175.89, daily: { [dt]: { sunrise: `${dt}T06:00`, sunset: `${dt}T19:00` } } }, DEFAULTS, '2026-11-13T12:00', [])[0];
   eq([w.outlook, w.rating, w.dive.level], [true, 'GO', 'n/a'], 'outlook day: wind-only GO, no dive rating');
+}
+// LINZ yearly CSV + secondary-port corrections (Tauranga 14 Nov 2026 -> Tairua: HW +7 min, LW +18 min).
+{
+  const ev = parseLinzCsv('14,Sa,11,2026,04:58,0.4,11:24,1.8,17:29,0.5,23:31,1.7\n15,Su,11,2026,05:37,0.4,12:00,1.8,18:08,0.5,,');
+  eq(ev.map((e) => e.t.slice(5) + e.type), ['11-14T04:58L', '11-14T11:24H', '11-14T17:29L', '11-14T23:31H', '11-15T05:37L', '11-15T12:00H', '11-15T18:08L'], 'LINZ CSV rows parsed with H/L');
+  eq(applyTideOffsets(ev, { hw: 7, lw: 18, ratio: 1 }).slice(0, 2).map((e) => e.t.slice(11)), ['05:16', '11:31'], 'Tairua corrections');
+}
+{
+  const ev = parseLinzCsv('14,Sa,11,2026,05:02,0.8,11:34,3.1,17:30,0.9,23:48,2.9');
+  eq(applyTideOffsets(ev, { hw: 0, lw: 0, ratio: 1 }).map((e) => e.t.slice(11) + e.type), ['05:02L', '11:34H', '17:30L', '23:48H'], 'Auckland primary port, no correction');
+}
+// Protected areas (point-in-polygon) with a toy square, plus trip/fuel check and log stats.
+{
+  setAreas([{ name: 'Test HPA', kind: 'HPA', rings: [[[-37.0, 175.0], [-37.0, 175.1], [-37.1, 175.1], [-37.1, 175.0]]] }]);
+  eq(!!insideProtected(-37.05, 175.05), true, 'inside protected square');
+  eq(insideProtected(-36.9, 175.05), null, 'outside protected square');
+  eq(protectedNear(-36.99, 175.05, 2).map((x) => x.inside), [false], 'near but outside within 2 km');
+  setAreas([]);
+  const d = { ss: 20 * 60 + 3 };
+  eq(tripCheck(d, 5, 80), null, 'no trip check for near spots');
+  eq(tripCheck(d, 19, 90).back, '19:03', 'be back an hour before sunset');
+  eq(tripCheck(d, 19, 90).fuel.startsWith('fuel OK'), true, 'fuel ok when a third of range covers it');
+  eq(tripCheck(d, 40, 90).fuel.startsWith('⚠'), true, 'fuel tight warning');
+  eq(shortWindow({ startH: 5, endH: 9 }), '05–09', 'short window label');
+  const ls = logStats([{ name: 'A', catches: [{ result: 'fish', conds: { stage: 'ebbing', light: 'dawn', wind: 6 } }, { result: 'blank', conds: { stage: 'ebbing', light: 'day', wind: 12 } }] }], [{ result: 'fish', conds: { stage: 'flooding', light: 'dawn', wind: 3 } }]);
+  eq([ls.all, ls.fishTrips, ls.groups.Tide.ebbing.n, ls.groups.Light.dawn.fish], [3, 2, 2, 2], 'log stats tallies');
+}
+// Gear: rod ratings, lure checks and situation-based recommendations.
+{
+  const by = (id) => COMBOS.find((c) => c.id === id);
+  eq(fitOf(170, by('tranx200hg')), 'fits', 'Deep V 170 g fits the TranX/Backbone');
+  eq([fitOf(170, by('saltist6500h')), fitOf(170, by('saltistmq4000d'))], ['over', 'over'], 'Deep V 170 g is over the 6500H and 4000D rods');
+  eq(fitOf(200, by('tranx200hg')), 'over', '200 g Squidwings exceeds even the Backbone (180 g)');
+  eq(fitOf(null, by('tranx200hg')), 'unknown', 'unknown weight is flagged');
+  eq(fitOf(30, by('ak3000a')), 'norating', 'AK3000A has no lure rating');
+  eq(rangeFit([60, 90], by('saltistmq4000d')).status, 'fits', '60-90 g slow-jigs fit the 4000D rod');
+  eq(rangeFit([100, 150], by('saltist6500h')).status, 'partial', '100-150 g partly exceeds the 6500H');
+  const mkOut = (lv) => ['Snapper', 'Kingfish', 'Gurnard', 'Kahawai', 'Trevally', 'John dory'].map((n, i) => ({ name: n, level: lv[n] || 'Slow', score: lv[n] === 'Good' ? 8 : lv[n] === 'Fair' ? 4 : 0 }));
+  const day = { date: '2026-11-14', moon: { tide: 'spring' } };
+  let p = gearPlan(day, mkOut({ Snapper: 'Good', Kingfish: 'Fair' }), MY_LURES);
+  const names = p.take.map((x) => x.combo.name);
+  eq(names.includes('Daiwa Saltist MQ 4000D') && names.includes('Daiwa Saltist 6500H') && names.includes('Shimano TranX 200HG'), true, 'snapper+kingfish in Nov: 4000D, 6500H and TranX: ' + names);
+  const txt = p.lureCheck.map((l) => l.text).join(' | ');
+  eq(/Deep V 170 g: fits Shimano TranX 200HG/.test(txt) && /over the rating of Daiwa Saltist 6500H \(max 120 g\) and Daiwa Saltist MQ 4000D \(max 100 g\)/.test(txt), true, 'Deep V check text');
+  eq(/Squidwings 200 g exceeds every rated rod/.test(txt), true, 'Squidwings flagged');
+  eq(/Long John Slider: weight unconfirmed/.test(txt) && /The Joker: weight unconfirmed/.test(txt), true, 'unknown weights unconfirmed');
+  p = gearPlan(day, mkOut({ Gurnard: 'Fair' }), MY_LURES);
+  eq([p.take.map((x) => x.combo.name), p.lureCheck.length], [['Kings AK3000A'], 0], 'gurnard-only day: AK3000A, no jig lure check');
+  eq(parseLures('Deep V, 170\nThe Joker,\nBig One, 95.5').map((l) => [l.name, l.g]), [['Deep V', 170], ['The Joker', null], ['Big One', 95.5]], 'lure parsing');
 }
 // Try-today ranking: kingfish suits a pinnacle on an island point; a sand spot suits gurnard; untagged spots are skipped.
 {

@@ -15,3 +15,6 @@
 1. Install the ntfy app, subscribe to a hard-to-guess topic name.
 2. Repo → Settings → Secrets → Actions → `NTFY_TOPIC` = that topic.
 3. Test: Actions → *Weekend GO alert* → Run workflow (force on). Runs automatically Thursday 6pm NZ.
+
+
+See `NOTES.md` for the full hand-over: how it works, data sources, how to update the live site, what is unverified and the to-do list.

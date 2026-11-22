@@ -2,7 +2,7 @@ import {
   DEFAULTS, fetchForecast, buildDays, tidesFromModel, parseLinz, parseLinzCsv, applyTideOffsets, mergeTides, nzNow,
   weekday, windowLabel, compass, dateOf, fmtMins, parseMaoriCalendar, lureAdvice, speciesOutlook, todaysTips, gearList,
 } from './core.js';
-import { SOURCES, SPECIES, HABITATS, COMBOS, SEED_SPOTS, VHF } from './knowledge.js';
+import { SOURCES, SPECIES, HABITATS, COMBOS, SEED_SPOTS, VHF, TACKLE_BOX } from './knowledge.js';
 import { setAreas, getAreas, protectedNear, insideProtected, KIND_TEXT, RULES_URL } from './protected.js';
 import { gearPlan, parseLures } from './gear.js';
 import { bestBet, gridModel, targetFor, tripCheck, turnsRedAt } from './plan.js';
@@ -17,7 +17,8 @@ const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; 
 // Older versions saved the whole settings object (including the spot list), which hid newer default spots. Settings now
 // carry a version; anything older drops its saved spot list so the current defaults apply.
 const savedSettings = load('pf.settings', {});
-if (savedSettings.v !== 2) delete savedSettings.places;
+if ((savedSettings.v || 0) < 2) delete savedSettings.places;
+if ((savedSettings.v || 0) < 3) delete savedSettings.lures; // the tackle list grew: use the current one
 let settings = { ...DEFAULTS, ...savedSettings };
 // Saved spots keep their own name/position but pick up newer defaults (e.g. tide corrections) by name.
 settings.places = settings.places.map((p) => ({ ...(DEFAULTS.places.find((d) => d.name === p.name) || {}), ...p }));
@@ -346,7 +347,7 @@ function dayView(date) {
     <div class="dsum">
       <div class="big"><b>What to take</b><span class="dim">your rods and reels</span></div>
       ${plan.take.length ? plan.take.map((t) => `<div class="sub"><b>${t.combo.name}</b> <span class="dim">· ${t.combo.role} · ${esc(t.combo.rod)} · ${t.combo.rodSpec} · ${t.combo.braid} braid</span>${t.modes.map((m) => `<div class="sub">• ${m.title}: ${m.lure}${m.g ? ' ' + (m.g[0] === m.g[1] ? m.g[0] : m.g[0] + '–' + m.g[1]) + ' g' : ''} – ${m.fit.text}${m.alts.length ? `<div class="sub dim">Alternative: ${m.alts.map((x) => `${x.name} (${x.text})`).join('; ')}</div>` : ''}</div>`).join('')}</div>`).join('') : '<div class="sub">Nothing reads Fair or Good for fish, so just take your lightest outfit for a low-expectation session.</div>'}
-      ${plan.picks.length ? `<div class="sub"><b>Lures to start with</b></div>${plan.picks.map((p) => `<div class="sub">• <b>${esc(p.lure.name)}</b>${p.lure.g ? ' ' + p.lure.g + ' g' : ''} <span class="dim">(${p.why})</span>: ${p.how ? esc(p.how) + '. ' : ''}<span class="dim">${p.status === 'unconfirmed' ? '⚠ weight unconfirmed – weigh it before pairing with a rod' : p.status === 'fits' ? 'Fits ' + p.rods.join(' and ') : 'Light enough for the Kings AK3000A (no rod rating on record)'}</span></div>`).join('')}` : ''}
+      ${plan.picks.length ? `<div class="sub"><b>Lures to start with</b></div>${plan.picks.map((p) => `<div class="sub">• <b>${esc(p.lure.name)}</b>${p.lure.g ? ' ' + p.lure.g + ' g' : ''}${p.lure.colours?.length ? ' <span class="dim">(' + esc(p.lure.colours.join(', ')) + ')</span>' : ''} <span class="dim">(${p.why})</span>: ${p.how ? esc(p.how) + '. ' : ''}<span class="dim">${p.status === 'unconfirmed' ? '⚠ weight unconfirmed – weigh it before pairing with a rod' : p.status === 'soft' ? 'Soft bait: choose the jig head weight to suit the rod' : p.status === 'fits' ? 'Fits ' + p.rods.join(' and ') : 'Light enough for the Kings AK3000A (no rod rating on record)'}</span></div>`).join('')}` : ''}
       ${plan.lureCheck.length ? `<div class="sub"><b>Your lures</b></div>${plan.lureCheck.map((l) => `<div class="sub ${l.level === 'warn' ? 'warnline' : ''}">${esc(l.text)}</div>`).join('')}` : ''}
       ${plan.notes.map((n) => `<div class="sub dim">${esc(n)}</div>`).join('')}
     </div>
@@ -366,6 +367,7 @@ function dayView(date) {
       <div class="sub dim">Because: ${lure.why}. Rule of thumb.</div>`)}
     ${d.outlook ? '' : det('More: dive outlook', `<div class="big"><span class="badge ${lvlClass(d.dive.level)}">${d.dive.level}${d.dive.window ? ' ' + windowLabel(d.dive.window) : ''}</span></div><div class="sub">${d.dive.why.join(' · ')}</div><div class="sub dim">Conditions only – midday sun, small swell, little recent rain, ideally slack water. Dive to your training.</div>`)}
     ${det('More: bait and terminal gear', gear.map((g) => `<div class="sub">• ${g.text}<div class="src">${srcLinks(g.src)}</div></div>`).join(''))}
+    ${det('More: my tackle box', `${(settings.lures || []).map((l) => `<div class="sub">• <b>${esc(l.name)}</b>${l.g ? ' ' + l.g + ' g' : l.kind === 'softbait' ? ' (soft bait)' : ' <span class="dim">(weight unknown)</span>'}${l.colours?.length ? ' <span class="dim">– ' + esc(l.colours.join(', ')) + '</span>' : ''}</div>`).join('')}<div class="sub"><b>Odds and sods</b></div>${Object.values(TACKLE_BOX).map((t) => `<div class="sub">• ${esc(t)}</div>`).join('')}`)}
     ${det('More: my rods and reels', COMBOS.map((c) => `<div class="sub"><b>${c.name}</b> (${c.role})<div class="sub dim">${esc(c.reel)}<br>${esc(c.rod)} · ${c.rodSpec}<br>Braid: ${c.braid}${c.spool ? ' · spool label ' + c.spool : ''}${c.note ? '<br>' + esc(c.note) : ''}</div></div>`).join(''))}
     ${det('More: getting live bait', `<div class="sub">Jack mackerel, koheru, piper, blue mackerel, small kahawai and mullet are the usual baits; around 100 mm suits kingfish, john dory and big snapper.</div>
       <div class="sub">Sabiki: always a sinker on the end, bring fish in as soon as hooked, twitch gently and vary depth; drop to a smaller size if there are no bites. Luminous beads need a light to recharge.</div>
@@ -482,7 +484,7 @@ function spotsView() {
       <div class="row"><button id="sp-gps">Use my location</button><button id="sp-add" class="save">Save spot</button></div>
       <div class="hint" id="sp-msg">Paste the position from your Garmin GPS / ActiveCaptain (degrees &amp; decimal minutes or decimal), or tap Use my location.</div>
       <div class="row"><label class="filebtn">Import GPX / backup<input type="file" id="sp-file" accept=".gpx,.json,text/xml,application/json" hidden></label><button id="sp-export">Export backup</button></div>
-      <div class="hint">Stored on this phone only. Export a backup now and then – clearing Safari data erases it.</div>
+      <div class="hint">Stored on this phone only. Tap Export backup now and then (spots, trips and settings) and keep the file in iCloud Drive – clearing Safari data erases everything here.</div>
     </div>
     ${cards || '<div class="empty">No spots yet.</div>'}`;
 }
@@ -507,8 +509,9 @@ app.addEventListener('click', (e) => {
     const prHit = insideProtected(pos.lat, pos.lon);
     addSpot({ ...pos, name, habitat: [...document.querySelectorAll('#sp-hab .hab:checked')].map((x) => x.value), depth: parseFloat($('#sp-depth').value) || null }); saveSpots(); spotsView(); spMsg(prHit ? `Saved – but ⚠ this position is inside ${prHit.area.name}: ${KIND_TEXT[prHit.area.kind]}.` : 'Saved.');
   } else if (e.target.id === 'sp-export') {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(spots, null, 1)], { type: 'application/json' }));
-    Object.assign(document.createElement('a'), { href: url, download: 'pauanui-spots.json' }).click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const backup = { app: 'pauanui-fishing', v: 2, exported: nzNow(), spots, trips, settings: load('pf.settings', {}) };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 1)], { type: 'application/json' }));
+    Object.assign(document.createElement('a'), { href: url, download: `pauanui-backup-${nzNow().slice(0, 10)}.json` }).click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   } else if (act === 'del' && card) {
     e.preventDefault();
     if (confirm('Delete this spot and its trips?')) { spots = spots.filter((s) => s.id !== card.dataset.id); saveSpots(); spotsView(); }
@@ -529,7 +532,16 @@ app.addEventListener('change', async (e) => {
   const text = await f.text();
   let n = 0;
   try {
-    if (/\.json$/i.test(f.name)) { for (const s of JSON.parse(text)) if (Number.isFinite(s.lat) && Number.isFinite(s.lon) && !spots.some((x) => x.id === s.id)) { spots.push({ ...s, id: s.id || newId(), catches: s.catches || [] }); n++; } }
+    if (/\.json$/i.test(f.name)) {
+      const parsed = JSON.parse(text);
+      const list = Array.isArray(parsed) ? parsed : parsed.spots || []; // older backups were just the spot list
+      for (const s of list) if (Number.isFinite(s.lat) && Number.isFinite(s.lon) && !spots.some((x) => x.id === s.id)) { spots.push({ ...s, id: s.id || newId(), catches: s.catches || [] }); n++; }
+      if (!Array.isArray(parsed)) {
+        for (const t of parsed.trips || []) if (!trips.some((x) => x.t === t.t && x.place === t.place)) trips.push(t);
+        localStorage.setItem('pf.trips', JSON.stringify(trips));
+        if (parsed.settings && Object.keys(parsed.settings).length) { localStorage.setItem('pf.settings', JSON.stringify({ ...load('pf.settings', {}), ...parsed.settings })); saveSpots(); setTimeout(() => location.reload(), 600); spotsView(); return spMsg(`Restored ${n} spot${n === 1 ? '' : 's'}, trips and settings – reloading…`); }
+      }
+    }
     else for (const p of parseGpx(text)) if (addSpot(p)) n++;
   } catch { return spMsg("That file couldn't be read."); }
   saveSpots(); spotsView(); spMsg(`Imported ${n} spot${n === 1 ? '' : 's'}.`);
@@ -587,7 +599,7 @@ $('#gear').addEventListener('click', () => {
   form.places.value = places().map((p) => `${p.name}, ${p.lat}, ${p.lon}`).join('\n');
   form.linz.value = linzText;
   form.favs.value = settings.favs || '';
-  form.lures.value = (settings.lures || []).map((l) => `${l.name}, ${l.g ?? ''}`).join('\n');
+  form.lures.value = (settings.lures || []).map((l) => `${l.name}, ${l.g ?? ''}${l.colours?.length ? ', ' + l.colours.join(' / ') : ''}`).join('\n');
   $('#linzhint').textContent = linzHint();
   $('#gridhint').textContent = cache ? `${cur().name}: Open-Meteo grid cells used: weather ${cache.grid.wx.map((v) => v.toFixed(2))}, marine ${cache.grid.marine.map((v) => v.toFixed(2))}.` : '';
   dlg.showModal();
@@ -611,7 +623,7 @@ form.addEventListener('submit', (e) => {
   placeIdx = Math.min(placeIdx, settings.places.length - 1);
   linzText = form.linz.value;
   // Store only what differs from the defaults, so later default improvements still reach this phone.
-  localStorage.setItem('pf.settings', JSON.stringify({ v: 2, ...Object.fromEntries(Object.entries(settings).filter(([k, v]) => k !== 'v' && JSON.stringify(v) !== JSON.stringify(DEFAULTS[k]))) }));
+  localStorage.setItem('pf.settings', JSON.stringify({ v: 3, ...Object.fromEntries(Object.entries(settings).filter(([k, v]) => k !== 'v' && JSON.stringify(v) !== JSON.stringify(DEFAULTS[k]))) }));
   localStorage.setItem('pf.linz', linzText);
   refresh(false);
 });

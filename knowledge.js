@@ -186,39 +186,53 @@ export const TIPS = [
 // ---- Your rods and reels. Each combo is named by its reel. lureG = the rod's stated lure-weight rating in grams
 // (null = no lure rating found, so weights can't be checked for it). From your own notes.
 export const COMBOS = [
-  { id: 'ak3000a', name: 'Kings AK3000A', reel: 'Kings AK3000A, spin, 3+ bearings',
+  { id: 'ak3000a', short: 'AK3000A', name: 'Kings AK3000A', reel: 'Kings AK3000A, spin, 3+ bearings',
     rod: 'Kings Traveller 7244L, 7\'2"', rodSpec: 'line 4–8 lb', lureG: null,
     braid: 'lime', spool: '6 lb/270 yd, 10 lb/185 yd, about 12 lb', role: 'light snapper',
     note: 'No lure-weight rating found for this rod. It is only suggested for light soft plastics and micro-jigs – check the blank before trusting a weight.' },
-  { id: 'saltist6500h', name: 'Daiwa Saltist 6500H', reel: 'Daiwa Saltist 6500H, spin, 6.2:1, max drag about 33 lb',
+  { id: 'saltist6500h', short: '6500H', name: 'Daiwa Saltist 6500H', reel: 'Daiwa Saltist 6500H, spin, 6.2:1, max drag about 33 lb',
     rod: 'Daiwa Saltist ST762H, 7\'6", 2-piece', rodSpec: 'lure 40–120 g, line 24 kg', lureG: [40, 120],
     braid: 'multicolour', spool: '25 lb/300 m, 30 lb/250 m', role: 'main kingfish',
     note: 'No separate vertical-jig rating found, so only the 40–120 g lure range is used.' },
-  { id: 'saltistmq4000d', name: 'Daiwa Saltist MQ 4000D', reel: 'Daiwa Saltist MQ 4000D, spin',
+  { id: 'saltistmq4000d', short: '4000D', name: 'Daiwa Saltist MQ 4000D', reel: 'Daiwa Saltist MQ 4000D, spin',
     rod: 'Daiwa Saltist Bluewater 66BJS slow jigging rod (marked B66BJS), 6\'6"', rodSpec: 'lures 20–100 g, PE 1–2', lureG: [20, 100],
     braid: 'pale yellow', spool: '', role: 'main snapper', note: '' },
-  { id: 'tranx200hg', name: 'Shimano TranX 200HG', reel: 'Shimano TranX 200HG, baitcaster',
+  { id: 'tranx200hg', short: 'TranX', name: 'Shimano TranX 200HG', reel: 'Shimano TranX 200HG, baitcaster',
     rod: 'Shimano Backbone Slow Pitch OH, 6\'3", 1-piece', rodSpec: '15–30 lb, 100–180 g', lureG: [100, 180],
     braid: 'purple/yellow', spool: '', role: 'heavier kingfish jigs', note: '' },
 ];
 
 // Lures from your tackle box. g = null means the weight isn't confirmed (flagged, never paired automatically).
-// Weights known so far: Deep V 170 g and Squidwings 200 g (your notes), Lil Squidwings 28 g and the micro jigs 20 g (your lure doc).
-// Editable in ⚙︎ (one per line: name, grams – leave grams blank if unknown).
+// Weights known so far: Deep V 170 g and 280 g, Double Trouble 300 g, Squidwings 200 g (your tackle list), Lil Squidwings 28 g and the micro jigs 20 g (your lure doc).
+// Editable in ⚙︎ (one per line: name, grams, colours separated by / – leave grams blank if unknown).
 export const MY_LURES = [
-  { name: 'Deep V', g: 170 },
-  { name: 'Squidwings', g: 200 },
+  { name: 'Deep V', g: 170, colours: ['Orange Assassin', 'Ballistic Blue'] },
+  { name: 'Deep V', g: 280, colours: ['Ballistic Blue'] },
+  { name: 'Double Trouble', g: 300, colours: ['Orange', 'Rainbow Warrior'] },
+  { name: 'Squidwings', g: 200, colours: ['chrome with pink skirt (trolling pack)', 'pink with skirt'] },
   { name: 'Lil Squidwings', g: 28 },
   { name: '20 g micro jigs', g: 20 },
   { name: 'Long John Slider', g: null },
-  { name: 'Double Trouble', g: null },
   { name: 'The Joker', g: null },
   { name: 'Beta Bug', g: null },
   { name: 'Boss Squid', g: null },
   { name: 'The Boss', g: null },
   { name: 'Kabura', g: null },
   { name: 'Coindrop', g: null },
+  { name: '10 in Livies', g: null, kind: 'softbait' },
 ];
+
+// Second tackle box ("odds and sods"): terminal tackle and bits. Used for the situation tips in What to take.
+export const TACKLE_BOX = {
+  hooks: 'loose hooks in bags, including red baitholder-style',
+  swivels: 'brass barrel swivels (two bags)',
+  sinkers: 'lead sinkers: ball/bullet, flat snapper, ledger and ballast rigs, some on snap swivels',
+  floats: 'red and white round floats',
+  handline: 'hand line of mono on a wooden winder',
+  softbait: 'green/chartreuse softbait',
+  beads: 'small beads',
+  tools: 'foam rig holders and bait needles',
+};
 
 // How each lure is worked and when it earns its place (from your own lure notes).
 export const LURE_INFO = {
@@ -233,6 +247,7 @@ export const LURE_INFO = {
   'Boss Squid': { kind: 'slow-pitch jig with an inchiku skirt', how: 'slow-pitch: lift gently, drop to glide back; the skirt pulses on the drop', best: 'big snapper on the sounder, kingfish feeding on squid' },
   'The Boss': { kind: 'leaf slow-pitch jig', how: 'lift, then drop the rod tip for slack so it slides and flutters flat; watch the line', best: 'fussy fish in deeper water (30 m+)' },
   'Kabura': { kind: 'sliding-head slider', how: 'drop to the bottom and wind painfully slowly (a turn every 2–3 s); ignore the tap-tap and only lift when the rod loads', best: 'snapper and gurnard over sand or mud, any water clarity; good in a rod holder' },
+  '10 in Livies': { kind: 'big softbait', how: 'paddle-tail for deep work, jerk-shad to cast at schools and markers; needs a heavy jig head (4–8 oz) and 24–37 kg gear', best: 'kingfish' },
   'Coindrop': { kind: 'flat micro leaf jig', how: 'shallow flutter on a semi-slack line, or short sharp lifts in deeper water', best: 'finicky snapper in low current or at slack tide' },
 };
 
@@ -271,5 +286,9 @@ export const GEAR = [
   { text: 'Live-bait kit: sabiki rigs (with sinker, in several sizes), bucket with aerator or a plumbed bin, dip net, berley bag.', when: (c) => c.fair('Kingfish') || c.fair('John dory'), src: ['baitfish', 'jetLive', 'lureBait'] },
   { text: 'Gurnard: two-hook ledger or pink flasher rig with 2/0–5/0 recurve hooks, thumb-sized strips of skipjack/mullet, or an orange slider.', when: (c) => c.fair('Gurnard'), src: ['gurnardAll', 'tough'] },
   { text: 'Kahawai and trevally: light fluorocarbon trace, and a mini stickbait for surface schools.', when: (c) => c.fair('Kahawai') || c.fair('Trevally'), src: ['trevally', 'kahawai'] },
+  { text: 'From your second box for snapper: the flat snapper and ball/bullet sinkers (keep the sinker as light as you can for a strayline), baitholder hooks and brass swivels.', when: (c) => c.fair('Snapper'), src: ['tough', 'winterTech'] },
+  { text: 'From your second box for gurnard: a ledger sinker, brass swivels and small beads for a flasher-style rig.', when: (c) => c.fair('Gurnard'), src: ['gurnardAll'] },
+  { text: 'From your second box for kingfish live bait: the red and white round floats, a ballast sinker to get the bait down, and the bait needles for a bridle rig.', when: (c) => c.fair('Kingfish') || c.fair('John dory'), src: ['livebait', 'slowTroll'] },
+  { text: 'The green/chartreuse softbait suits stained or murky water (chartreuse) and is a good all-round colour; the hand line is a handy backup for catching bait.', when: () => true, src: ['colours'] },
   { text: 'Pre-cut frozen baits from home (pilchard, skipjack); fresh jack mackerel for bigger predators.', when: () => true, src: ['jetTech'] },
 ];
